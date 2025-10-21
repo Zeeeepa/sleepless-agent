@@ -30,7 +30,7 @@ cp .env.example .env
 nano .env  # Add SLACK and ANTHROPIC tokens
 
 # 3. Run
-python -m src.daemon
+python -m sleepless_agent.daemon
 ```
 
 ## Slack App Setup
@@ -67,17 +67,19 @@ Slack → SlackBot → TaskQueue (SQLite)
 
 ```
 src/
-├── daemon.py          Main event loop
-├── bot.py             Slack interface
-├── task_queue.py      Task management
-├── claude_executor.py Claude API + tools
-├── tools.py           File/bash operations
-├── scheduler.py       Smart scheduling
-├── git_manager.py     Git automation
-├── monitor.py         Health & metrics
-├── models.py          Database models
-├── config.py          Config management
-├── results.py         Result storage
+└── sleepless_agent/
+    ├── __init__.py          Package metadata
+    ├── daemon.py            Main event loop
+    ├── bot.py               Slack interface
+    ├── task_queue.py        Task management
+    ├── claude_executor.py   Claude API + tools
+    ├── claude_code_executor.py  Claude CLI wrapper
+    ├── tools.py             File/bash operations
+    ├── scheduler.py         Smart scheduling
+    ├── git_manager.py       Git automation
+    ├── monitor.py           Health & metrics
+    ├── models.py            Database models
+    └── results.py           Result storage
 ```
 
 ## Configuration
@@ -237,7 +239,7 @@ DEBUG=false
 
 1. Read GETTING_STARTED.md for detailed setup
 2. Configure .env with your tokens
-3. Run: `python -m src.daemon`
+3. Run: `python -m sleepless_agent.daemon`
 4. Test commands in Slack
 5. Deploy as service using Makefile
 6. Monitor with `/health` and `/metrics`

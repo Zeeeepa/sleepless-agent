@@ -6,6 +6,20 @@ build-backend = "setuptools.build_meta"
 name = "sleepless-agent"
 version = "0.1.0"
 description = "24/7 AI agent that maximizes Claude usage via Slack interface"
+readme = "README.md"
+authors = [{name = "Sleepless Agent Maintainers"}]
+license = {file = "LICENSE"}
+keywords = ["ai", "automation", "agents", "slack", "anthropic"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Communications :: Chat",
+    "Topic :: Office/Business",
+]
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.34.4",
@@ -19,4 +33,15 @@ dependencies = [
 ]
 
 [project.scripts]
-sleepless-agent = "src.daemon:main"
+sleepless-agent = "sleepless_agent.daemon:main"
+
+[project.urls]
+Homepage = "https://github.com/context-machine-lab/sleepless-agent"
+Repository = "https://github.com/context-machine-lab/sleepless-agent"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["sleepless_agent*"]

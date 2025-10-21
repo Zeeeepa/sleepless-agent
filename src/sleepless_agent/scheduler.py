@@ -4,8 +4,8 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from src.models import Task, TaskPriority, TaskStatus
-from src.task_queue import TaskQueue
+from sleepless_agent.models import Task, TaskPriority, TaskStatus
+from sleepless_agent.task_queue import TaskQueue
 
 logger = logging.getLogger(__name__)
 
