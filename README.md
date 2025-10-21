@@ -1,6 +1,6 @@
 # Sleepless Agent
 
-A 24/7 AI assistant daemon that continuously works on tasks via Slack. Maximizes Claude API usage by processing both random thoughts and serious jobs automatically.
+A 24/7 AI assistant daemon that continuously works on tasks via Slack. Uses Claude Code CLI to process both random thoughts and serious jobs automatically with isolated workspaces.
 
 ## Features
 
@@ -9,7 +9,8 @@ A 24/7 AI assistant daemon that continuously works on tasks via Slack. Maximizes
 - 🎯 **Hybrid Autonomy**: Auto-applies random thoughts, requires review for serious jobs
 - ⚡ **Smart Scheduling**: Optimizes task execution based on priorities
 - 📊 **Task Queue**: SQLite-backed persistent task management
-- 🔌 **Claude API**: Deep integration for code generation, research, documentation, etc.
+- 🔌 **Claude Code CLI**: Uses Claude Code for code generation, research, documentation, etc.
+- 🏗️ **Isolated Workspaces**: Each task gets its own workspace for true parallelism
 - 📝 **Result Storage**: All outputs saved with metadata for future reference
 
 ## Quick Start
@@ -39,10 +40,13 @@ cp .env.example .env
 nano .env
 ```
 
-Required environment variables:
-- `ANTHROPIC_API_KEY`: Your Claude API key
+Required:
+- **Claude Code CLI**: Install from [claude.ai/code](https://claude.ai/code) and ensure `claude` is in PATH
 - `SLACK_BOT_TOKEN`: Slack bot token (starts with `xoxb-`)
 - `SLACK_APP_TOKEN`: Slack app token (starts with `xapp-`)
+
+Optional:
+- `CLAUDE_CODE_BINARY_PATH`: Custom path to claude binary (default: `claude` from PATH)
 
 ### 3. Setup Slack App
 
@@ -146,7 +150,7 @@ Result Manager (Storage + Git)
 - **daemon.py**: Main event loop, task orchestration
 - **bot.py**: Slack interface, command parsing
 - **task_queue.py**: Task CRUD, priority scheduling
-- **claude_executor.py**: Claude API wrapper with different prompt templates
+- **claude_code_executor.py**: Claude Code CLI wrapper with isolated workspace management
 - **results.py**: Result storage, file management
 - **models.py**: SQLAlchemy models for Task, Result
 - **config.py**: Configuration management
@@ -219,14 +223,14 @@ sqlite3 data/tasks.db "SELECT * FROM tasks;"
 ✅ **Phase 1** - Foundation
 - Task queue with SQLite
 - Slack bot with basic commands
-- Basic Claude API integration
-- Result storage
+- Claude Code CLI integration
+- Result storage with workspace tracking
 
-✅ **Phase 2** - Claude Tool Use
-- File reading/writing/editing
-- Bash command execution
-- Tool execution loop with context extraction
-- Automatic tracking of file modifications
+✅ **Phase 2** - Isolated Workspaces
+- Per-task workspace creation
+- File modification tracking
+- Claude Code subprocess management
+- Timeout and error handling
 
 ✅ **Phase 3** - Smart Scheduling
 - Credit tracking per 5-hour window
@@ -254,9 +258,10 @@ sqlite3 data/tasks.db "SELECT * FROM tasks;"
 - Check logs: `tail -f logs/agent.log`
 
 **Tasks not executing?**
-- Verify ANTHROPIC_API_KEY is correct
-- Check Claude API quota
+- Verify Claude Code CLI is installed: `claude --version`
+- Check Claude Code is in PATH or set CLAUDE_CODE_BINARY_PATH
 - Review error messages in logs
+- Check workspace permissions
 
 **Database locked?**
 - Close all other connections to tasks.db
