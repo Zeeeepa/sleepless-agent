@@ -36,6 +36,7 @@ class ResultManager:
         git_commit_sha: Optional[str] = None,
         git_pr_url: Optional[str] = None,
         git_branch: Optional[str] = None,
+        workspace_path: Optional[str] = None,
     ) -> Result:
         """Save task result to database and file"""
         session = self.SessionLocal()
@@ -49,6 +50,7 @@ class ResultManager:
                 git_commit_sha=git_commit_sha,
                 git_pr_url=git_pr_url,
                 git_branch=git_branch,
+                workspace_path=workspace_path,
             )
 
             session.add(result)
@@ -69,6 +71,7 @@ class ResultManager:
                         "git_commit_sha": git_commit_sha,
                         "git_pr_url": git_pr_url,
                         "git_branch": git_branch,
+                        "workspace_path": workspace_path,
                     },
                     indent=2,
                 )
