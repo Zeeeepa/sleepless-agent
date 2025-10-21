@@ -1,0 +1,61 @@
+# Sleepless Agent Configuration
+
+# Agent settings
+agent:
+  name: "Sleepless Agent"
+  description: "24/7 AI assistant maximizing Claude usage"
+  workspace: "./workspace"
+  db_path: "./data/tasks.db"
+  results_path: "./data/results"
+  max_parallel_tasks: 3
+  task_timeout_seconds: 3600  # 1 hour
+
+# Claude settings
+claude:
+  model: "claude-opus-4-1-20250805"
+  max_tokens: 4096
+  temperature: 0.7
+  timeout_seconds: 300
+
+# Slack settings
+slack:
+  auto_thread_replies: true
+  notification_enabled: true
+  rich_formatting: true
+
+# Credit tracking (assumes 5-hour refresh)
+credits:
+  track_windows: true
+  window_size_hours: 5
+  max_tasks_per_window: 10  # Adjust based on your usage tier
+
+# Task scheduling
+scheduler:
+  serious_job_priority: 100
+  random_thought_priority: 10
+  auto_retry_failed: true
+  max_retries: 3
+  retry_delay_seconds: 300
+
+# Git configuration
+git:
+  auto_commit_random_thoughts: true
+  auto_commit_interval_minutes: 60
+  random_thoughts_branch: "random-ideas"
+  serious_jobs_branch: "main"  # Create PRs
+  commit_signature_enabled: false
+
+# Logging
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "./logs/agent.log"
+  max_size_mb: 100
+  backup_count: 5
+
+# Monitoring
+monitoring:
+  health_check_interval_seconds: 300
+  task_queue_check_interval_seconds: 30
+  auto_restart_on_error: true
+  max_restart_attempts: 5

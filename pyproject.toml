@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sleepless-agent"
+version = "0.1.0"
+description = "24/7 AI agent that maximizes Claude usage via Slack interface"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.34.4",
+    "slack-sdk>=4.27.2",
+    "sqlalchemy>=2.1.5",
+    "python-dotenv>=1.0.1",
+    "pydantic>=2.8.2",
+    "pydantic-settings>=2.3.4",
+    "gitpython>=3.1.43",
+    "aiosqlite>=3.2.1",
+]
+
+[project.scripts]
+sleepless-agent = "src.daemon:main"
