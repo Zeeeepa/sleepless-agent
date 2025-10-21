@@ -1,0 +1,25 @@
+[Unit]
+Description=Sleepless Agent - 24/7 AI Assistant
+After=network.target
+
+[Service]
+Type=simple
+User=sleepless
+WorkingDirectory=/opt/sleepless-agent
+ExecStart=/opt/sleepless-agent/venv/bin/python -m src.daemon
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment
+EnvironmentFile=/opt/sleepless-agent/.env
+
+# Security
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/sleepless-agent/data /opt/sleepless-agent/logs /opt/sleepless-agent/workspace
+
+[Install]
+WantedBy=multi-user.target
