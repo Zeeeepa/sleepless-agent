@@ -71,6 +71,9 @@ class Result(Base):
     git_pr_url = Column(String(512), nullable=True)
     git_branch = Column(String(255), nullable=True)
 
+    # Workspace
+    workspace_path = Column(String(512), nullable=True)  # Path to isolated task workspace
+
     # Metadata
     processing_time_seconds = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
