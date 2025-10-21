@@ -70,7 +70,7 @@ Fill in:
 ### 5. Run Agent
 
 ```bash
-python -m src.daemon
+python -m sleepless_agent.daemon
 ```
 
 You should see:
@@ -311,7 +311,7 @@ Filename: idea_{task_id}_{timestamp}.md
 cat .env | grep -E "SLACK|ANTHROPIC"
 
 # 2. Bot is running
-pgrep -f "src.daemon"
+pgrep -f "sleepless_agent.daemon"
 
 # 3. Logs
 tail -50 logs/agent.log | grep ERROR
@@ -328,7 +328,7 @@ ls -la ./workspace
 # Should be readable/writable
 
 # Try manual tool test:
-python -c "from src.tools import ToolExecutor; t = ToolExecutor('./workspace'); print(t.list_files())"
+python -c "from sleepless_agent.tools import ToolExecutor; t = ToolExecutor('./workspace'); print(t.list_files())"
 ```
 
 ### Git commits fail

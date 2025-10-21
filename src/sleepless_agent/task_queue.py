@@ -8,7 +8,7 @@ from typing import List, Optional
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from src.models import Task, TaskPriority, TaskStatus
+from sleepless_agent.models import Task, TaskPriority, TaskStatus
 
 logger = logging.getLogger(__name__)
 

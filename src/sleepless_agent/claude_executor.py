@@ -6,7 +6,7 @@ from typing import Optional
 
 from anthropic import Anthropic
 
-from src.tools import ToolExecutor
+from sleepless_agent.tools import ToolExecutor
 
 logger = logging.getLogger(__name__)
 

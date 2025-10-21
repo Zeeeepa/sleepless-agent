@@ -7,15 +7,15 @@ import sys
 import time
 from pathlib import Path
 
-from src.bot import SlackBot
-from src.claude_code_executor import ClaudeCodeExecutor
-from src.config import get_config
-from src.git_manager import GitManager
-from src.models import TaskPriority, TaskStatus, init_db
-from src.monitor import HealthMonitor, PerformanceLogger
-from src.results import ResultManager
-from src.scheduler import SmartScheduler
-from src.task_queue import TaskQueue
+from sleepless_agent.bot import SlackBot
+from sleepless_agent.claude_code_executor import ClaudeCodeExecutor
+from sleepless_agent.config import get_config
+from sleepless_agent.git_manager import GitManager
+from sleepless_agent.models import TaskPriority, TaskStatus, init_db
+from sleepless_agent.monitor import HealthMonitor, PerformanceLogger
+from sleepless_agent.results import ResultManager
+from sleepless_agent.scheduler import SmartScheduler
+from sleepless_agent.task_queue import TaskQueue
 
 # Setup logging
 logging.basicConfig(

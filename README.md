@@ -2,6 +2,12 @@
 
 A 24/7 AI assistant daemon that continuously works on tasks via Slack. Uses Claude Code CLI to process both random thoughts and serious jobs automatically with isolated workspaces.
 
+## About
+- Maintained by Context Machine Lab
+- Ships as `sleepless-agent` on PyPI (`pip install sleepless-agent`)
+- Automates task intake, execution, and reporting via Slack + Claude integration
+- Designed for continuous operation with isolated workspaces and automated git hygiene
+
 ## Features
 
 - 🤖 **Continuous Operation**: Runs 24/7 daemon, always ready for new tasks
@@ -68,11 +74,16 @@ Optional:
 
 ```bash
 # Terminal 1: Start the daemon
-python -m src.daemon
+python -m sleepless_agent.daemon
 
 # Terminal 2 (optional): Monitor logs
 tail -f logs/agent.log
 ```
+
+## Releases
+- Latest stable: **0.1.0** – published on [PyPI](https://pypi.org/project/sleepless-agent/0.1.0/)
+- Install or upgrade with `pip install -U sleepless-agent`
+- Release notes and changelog are tracked via GitHub Releases (tag `v0.1.0` onward)
 
 ## Slack Commands
 
@@ -265,8 +276,7 @@ sqlite3 data/tasks.db "SELECT * FROM tasks;"
 
 **Database locked?**
 - Close all other connections to tasks.db
-- Try: `rm data/tasks.db && python -m src.daemon`
+- Try: `rm data/tasks.db && python -m sleepless_agent.daemon`
 
 ## License
-
-MIT
+- Released under the [MIT License](LICENSE)

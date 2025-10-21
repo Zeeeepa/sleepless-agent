@@ -8,7 +8,7 @@
 	<array>
 		<string>/usr/local/bin/python3</string>
 		<string>-m</string>
-		<string>src.daemon</string>
+		<string>sleepless_agent.daemon</string>
 	</array>
 	<key>WorkingDirectory</key>
 	<string>/Users/YOUR_USERNAME/projects/sleepless-agent</string>

@@ -10,8 +10,8 @@ from slack_sdk.socket_mode import SocketModeClient
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
 
-from src.models import TaskPriority
-from src.task_queue import TaskQueue
+from sleepless_agent.models import TaskPriority
+from sleepless_agent.task_queue import TaskQueue
 
 logger = logging.getLogger(__name__)
 

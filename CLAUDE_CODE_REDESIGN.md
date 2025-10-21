@@ -24,7 +24,7 @@ Redesign the Sleepless Agent to use **Claude Code CLI** instead of direct Claude
 - `src/monitor.py` - Health monitoring (no changes)
 - `src/results.py` - Result storage (no changes)
 - `src/models.py` - Data models (minor additions)
-- `src/daemon.py` - Main loop (changes for new executor)
+- `sleepless_agent/daemon.py` - Main loop (changes for new executor)
 
 ## What Changes
 
@@ -399,7 +399,7 @@ Remove `ClaudeConfig` with API key requirement.
 
 ### 5. Daemon Integration Changes
 
-#### Updated `src/daemon.py` - `SleepleassAgent.__init__()`
+#### Updated `sleepless_agent/daemon.py` - `SleepleassAgent.__init__()`
 
 ```python
 def __init__(self):
@@ -433,7 +433,7 @@ def __init__(self):
     # ... rest of initialization
 ```
 
-#### Updated `src/daemon.py` - `_execute_task()`
+#### Updated `sleepless_agent/daemon.py` - `_execute_task()`
 
 ```python
 async def _execute_task(self, task):
