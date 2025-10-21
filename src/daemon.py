@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 from src.bot import SlackBot
-from src.claude_executor import ClaudeExecutor
+from src.claude_code_executor import ClaudeCodeExecutor
 from src.config import get_config
 from src.git_manager import GitManager
 from src.models import TaskPriority, TaskStatus, init_db
@@ -40,16 +40,16 @@ class SleepleassAgent:
             task_queue=self.task_queue,
             max_parallel_tasks=self.config.agent.max_parallel_tasks,
         )
-        self.claude = ClaudeExecutor(
-            api_key=self.config.claude.api_key,
-            model=self.config.claude.model,
-            workspace=str(self.config.agent.workspace),
+        self.claude = ClaudeCodeExecutor(
+            workspace_root=str(self.config.agent.workspace_root),
+            claude_binary=self.config.claude_code.binary_path,
+            default_timeout=self.config.claude_code.default_timeout,
         )
         self.results = ResultManager(
             str(self.config.agent.db_path),
             str(self.config.agent.results_path),
         )
-        self.git = GitManager(workspace=str(self.config.agent.workspace))
+        self.git = GitManager(workspace_root=str(self.config.agent.workspace_root))
         self.git.init_repo()
         self.git.create_random_ideas_branch()
 
@@ -73,7 +73,8 @@ class SleepleassAgent:
 
     def _init_directories(self):
         """Initialize required directories"""
-        self.config.agent.workspace.mkdir(parents=True, exist_ok=True)
+        self.config.agent.workspace_root.mkdir(parents=True, exist_ok=True)
+        self.config.agent.shared_workspace.mkdir(parents=True, exist_ok=True)
         self.config.agent.results_path.mkdir(parents=True, exist_ok=True)
         Path("./logs").mkdir(parents=True, exist_ok=True)
 
@@ -144,52 +145,72 @@ class SleepleassAgent:
 
             logger.info(f"Executing task {task.id}: {task.description[:50]}...")
 
-            # Execute with Claude
+            # Execute with Claude Code
             start_time = time.time()
-            result_output, files_modified, commands_executed = self.claude.execute_task(
+            result_output, files_modified, commands_executed, exit_code = self.claude.execute_task(
+                task_id=task.id,
                 description=task.description,
                 task_type="general",
-                context=self.task_queue.get_task_context(task.id),
-                max_tokens=self.config.claude.max_tokens,
+                priority=task.priority.value,
+                timeout=self.config.agent.task_timeout_seconds,
             )
             processing_time = int(time.time() - start_time)
+
+            # Check if execution was successful
+            if exit_code != 0:
+                logger.warning(f"Task {task.id} completed with non-zero exit code: {exit_code}")
+                # Note: We don't fail the task on non-zero exit, as Claude Code may still produce useful output
 
             # Handle git operations based on priority
             git_commit_sha = None
             git_pr_url = None
             git_branch = None
 
+            # Get task workspace
+            task_workspace = self.claude.get_workspace_path(task.id)
+
             if task.priority == TaskPriority.RANDOM:
-                # Auto-commit random thoughts
+                # Auto-commit random thoughts from workspace to main repo
                 git_commit_sha = self.git.commit_random_thought(
                     task_id=task.id,
+                    task_workspace=task_workspace,
                     description=task.description,
                     result_content=result_output,
                 )
 
+                # Clean up workspace if configured
+                if self.config.claude_code.cleanup_random_workspaces:
+                    try:
+                        self.claude.cleanup_workspace(task.id, force=True)
+                        logger.info(f"Cleaned up workspace for task {task.id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to cleanup workspace for task {task.id}: {e}")
+
             elif task.priority == TaskPriority.SERIOUS and files_modified:
-                # Create branch and commit for serious tasks
-                git_branch = self.git.create_task_branch(task.id, task.description)
+                # For serious tasks, workspace already has git repo
+                # Validate and commit within workspace
+                is_valid, validation_msg = self.git.validate_changes(
+                    task_workspace, files_modified
+                )
 
-                if git_branch:
-                    # Validate changes before committing
-                    is_valid, validation_msg = self.git.validate_changes(files_modified)
+                if is_valid:
+                    git_branch = f"task-{task.id}"
+                    git_commit_sha = self.git.commit_in_workspace(
+                        workspace=task_workspace,
+                        files=files_modified,
+                        message=f"Implement task: {task.description[:60]}",
+                    )
 
-                    if is_valid:
-                        git_commit_sha = self.git.commit_task_changes(
-                            task_id=task.id,
-                            files=files_modified,
-                            message=f"Implement task: {task.description[:60]}",
-                        )
-
-                        # Create PR
-                        git_pr_url = self.git.create_pr(
+                    # Create PR from workspace
+                    if git_commit_sha:
+                        git_pr_url = self.git.create_pr_from_workspace(
+                            task_workspace=task_workspace,
                             task_id=task.id,
                             task_description=task.description,
                             branch=git_branch,
                         )
-                    else:
-                        logger.warning(f"Validation failed for task {task.id}: {validation_msg}")
+                else:
+                    logger.warning(f"Validation failed for task {task.id}: {validation_msg}")
 
             # Save result
             result = self.results.save_result(
@@ -201,6 +222,7 @@ class SleepleassAgent:
                 git_commit_sha=git_commit_sha,
                 git_pr_url=git_pr_url,
                 git_branch=git_branch,
+                workspace_path=str(task_workspace),
             )
 
             # Mark as completed

@@ -19,17 +19,18 @@ class SlackConfig(BaseSettings):
     notification_enabled: bool = True
 
 
-class ClaudeConfig(BaseSettings):
-    """Claude API configuration"""
-    api_key: str = Field(..., alias="ANTHROPIC_API_KEY")
-    model: str = "claude-opus-4-1-20250805"
-    max_tokens: int = 4096
-    temperature: float = 0.7
+class ClaudeCodeConfig(BaseSettings):
+    """Claude Code CLI configuration"""
+    binary_path: str = "claude"  # Path to claude binary (default: from PATH)
+    default_timeout: int = 3600  # 1 hour default timeout
+    cleanup_random_workspaces: bool = True  # Clean up after random tasks complete
+    preserve_serious_workspaces: bool = True  # Keep serious task workspaces for debugging
 
 
 class AgentConfig(BaseSettings):
     """Agent configuration"""
-    workspace: Path = Path("./workspace")
+    workspace_root: Path = Path("./workspace")  # Root for isolated task workspaces
+    shared_workspace: Path = Path("./workspace/shared")  # Optional shared resources
     db_path: Path = Path("./data/tasks.db")
     results_path: Path = Path("./data/results")
     max_parallel_tasks: int = 3
@@ -39,7 +40,7 @@ class AgentConfig(BaseSettings):
 class Config(BaseSettings):
     """Main configuration"""
     slack: SlackConfig
-    claude: ClaudeConfig
+    claude_code: ClaudeCodeConfig
     agent: AgentConfig
 
     class Config:
@@ -47,12 +48,12 @@ class Config(BaseSettings):
 
     def __init__(self, **data):
         slack_config = SlackConfig()
-        claude_config = ClaudeConfig()
+        claude_code_config = ClaudeCodeConfig()
         agent_config = AgentConfig()
 
         super().__init__(
             slack=slack_config,
-            claude=claude_config,
+            claude_code=claude_code_config,
             agent=agent_config,
             **data
         )
