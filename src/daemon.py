@@ -145,9 +145,9 @@ class SleepleassAgent:
 
             logger.info(f"Executing task {task.id}: {task.description[:50]}...")
 
-            # Execute with Claude Code
+            # Execute with Claude Code SDK (async)
             start_time = time.time()
-            result_output, files_modified, commands_executed, exit_code = self.claude.execute_task(
+            result_output, files_modified, commands_executed, exit_code = await self.claude.execute_task(
                 task_id=task.id,
                 description=task.description,
                 task_type="general",
