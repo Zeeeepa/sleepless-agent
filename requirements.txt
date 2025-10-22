@@ -1,3 +1,4 @@
+claude-agent-sdk
 slack-sdk==4.27.2
 sqlalchemy==2.1.5
 python-dotenv==1.0.1

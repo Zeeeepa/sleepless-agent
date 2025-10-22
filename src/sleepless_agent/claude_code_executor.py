@@ -1,63 +1,85 @@
-"""Claude Code CLI executor for task processing"""
+"""Claude Code SDK executor for task processing"""
 
-import json
 import logging
-import subprocess
 import time
 from pathlib import Path
 from typing import Optional, Tuple, List
+
+from claude_agent_sdk import (
+    query,
+    ClaudeAgentOptions,
+    CLINotFoundError,
+    ProcessError,
+    CLIJSONDecodeError,
+    AssistantMessage,
+    ToolUseBlock,
+    ToolResultBlock,
+    ResultMessage,
+    TextBlock,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class ClaudeCodeExecutor:
-    """Execute tasks using Claude Code CLI"""
+    """Execute tasks using Claude Code CLI via Python Agent SDK"""
 
     def __init__(
         self,
         workspace_root: str = "./workspace",
-        claude_binary: str = "claude",
         default_timeout: int = 3600,
     ):
         """Initialize Claude Code executor
 
         Args:
             workspace_root: Root directory for task workspaces
-            claude_binary: Path to claude binary (default: "claude" from PATH)
-            default_timeout: Default timeout in seconds
+            default_timeout: Default timeout in seconds (not used by SDK directly)
         """
         self.workspace_root = Path(workspace_root)
-        self.claude_binary = claude_binary
         self.default_timeout = default_timeout
         self.workspace_root.mkdir(parents=True, exist_ok=True)
 
         # Verify Claude Code is available
-        self._verify_claude_binary()
+        self._verify_claude_cli()
 
         logger.info(f"ClaudeCodeExecutor initialized with workspace: {self.workspace_root}")
 
-    def _verify_claude_binary(self):
-        """Verify Claude Code binary is available"""
+    def _verify_claude_cli(self):
+        """Verify Claude Code CLI is available by attempting a test query"""
         try:
-            result = subprocess.run(
-                [self.claude_binary, "--version"],
-                capture_output=True,
-                timeout=5,
-                text=True,
-            )
-            if result.returncode == 0:
-                logger.info(f"Claude Code CLI found: {result.stdout.strip()}")
-            else:
-                logger.warning(f"Claude Code CLI check returned non-zero: {result.returncode}")
-        except FileNotFoundError:
-            logger.error(f"Claude Code binary not found: {self.claude_binary}")
+            # Simple test to verify CLI is installed
+            import asyncio
+
+            async def test_cli():
+                try:
+                    async for _ in query(
+                        prompt="test",
+                        options=ClaudeAgentOptions(max_turns=1)
+                    ):
+                        break  # Just need to verify it starts
+                    return True
+                except CLINotFoundError:
+                    return False
+                except Exception:
+                    # Other errors are OK - means CLI exists but query failed
+                    return True
+
+            # Run the test
+            result = asyncio.run(test_cli())
+            if not result:
+                raise CLINotFoundError()
+
+            logger.info("Claude Code CLI verified successfully")
+
+        except CLINotFoundError:
+            logger.error("Claude Code CLI not found")
             raise RuntimeError(
-                f"Claude Code CLI not found at '{self.claude_binary}'. "
-                "Please install Claude Code or set the correct binary path in config."
+                "Claude Code CLI not found. "
+                "Please install with: npm install -g @anthropic-ai/claude-code"
             )
         except Exception as e:
-            logger.error(f"Failed to verify Claude Code binary: {e}")
-            raise
+            logger.warning(f"Could not verify Claude Code CLI: {e}")
+            # Don't fail initialization - let it fail on actual execution if needed
 
     def create_task_workspace(self, task_id: int, init_git: bool = False) -> Path:
         """Create isolated workspace for task
@@ -75,6 +97,7 @@ class ClaudeCodeExecutor:
         # Optionally initialize git
         if init_git:
             try:
+                import subprocess
                 subprocess.run(
                     ["git", "init"],
                     cwd=workspace,
@@ -93,13 +116,13 @@ class ClaudeCodeExecutor:
                     capture_output=True,
                 )
                 logger.info(f"Initialized git in workspace: {workspace}")
-            except subprocess.CalledProcessError as e:
+            except Exception as e:
                 logger.warning(f"Failed to initialize git in workspace: {e}")
 
         logger.info(f"Created workspace: {workspace}")
         return workspace
 
-    def execute_task(
+    async def execute_task(
         self,
         task_id: int,
         description: str,
@@ -107,14 +130,14 @@ class ClaudeCodeExecutor:
         priority: str = "random",
         timeout: Optional[int] = None,
     ) -> Tuple[str, List[str], List[str], int]:
-        """Execute task with Claude Code
+        """Execute task with Claude Code SDK
 
         Args:
             task_id: Task ID
             description: Task description/prompt
             task_type: Type of task (code, research, brainstorm, etc.)
             priority: Task priority (random or serious)
-            timeout: Timeout in seconds (default: self.default_timeout)
+            timeout: Timeout in seconds (not directly supported by SDK)
 
         Returns:
             Tuple of (output_text, files_modified, commands_executed, exit_code)
@@ -129,60 +152,98 @@ class ClaudeCodeExecutor:
             # Build enhanced prompt
             prompt = self._build_prompt(description, task_type, priority)
 
-            # Write prompt to file
-            prompt_file = workspace / "task_prompt.txt"
-            prompt_file.write_text(prompt, encoding="utf-8")
-
             # Track files before execution
             files_before = self._get_workspace_files(workspace)
 
-            # Execute Claude Code
-            logger.info(f"Executing Claude Code for task {task_id} (timeout: {timeout}s)...")
+            # Track tool usage
+            files_modified = set()
+            commands_executed = []
+            output_parts = []
+            success = True
+
+            # Execute Claude Code via SDK
+            logger.info(f"Executing Claude Code SDK for task {task_id}...")
             start_time = time.time()
 
-            result = subprocess.run(
-                [self.claude_binary, "chat", "-f", str(prompt_file)],
-                cwd=workspace,
-                capture_output=True,
-                timeout=timeout,
-                text=True,
+            options = ClaudeAgentOptions(
+                cwd=str(workspace),
+                allowed_tools=[
+                    "Read", "Write", "Edit", "Bash", "Glob", "Grep",
+                    "TodoWrite", "BashOutput", "KillBash"
+                ],
+                permission_mode="acceptEdits" if priority == "serious" else "acceptEdits",
+                max_turns=20,  # Limit turns to prevent infinite loops
             )
+
+            # Process message stream
+            async for message in query(prompt=prompt, options=options):
+                # Handle AssistantMessage with content blocks
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            output_parts.append(block.text)
+                        elif isinstance(block, ToolUseBlock):
+                            # Track tool usage
+                            logger.info(f"Tool used: {block.name}")
+
+                            if block.name in ["Write", "Edit"]:
+                                file_path = block.input.get("file_path", "")
+                                if file_path:
+                                    files_modified.add(file_path)
+
+                            elif block.name == "Bash":
+                                command = block.input.get("command", "")
+                                if command:
+                                    commands_executed.append(command)
+
+                # Handle ResultMessage (final result)
+                elif isinstance(message, ResultMessage):
+                    success = not message.is_error
+                    if message.result:
+                        output_parts.append(f"\n[Result: {message.result}]")
+
+                    logger.info(
+                        f"Task {task_id} completed in {message.duration_ms}ms "
+                        f"(API time: {message.duration_api_ms}ms, turns: {message.num_turns})"
+                    )
+
+                    if message.total_cost_usd is not None:
+                        logger.info(f"Task cost: ${message.total_cost_usd:.4f}")
 
             execution_time = int(time.time() - start_time)
 
-            # Capture output
-            stdout = result.stdout
-            stderr = result.stderr
-            exit_code = result.returncode
-
-            # Save outputs
-            (workspace / "claude_output.txt").write_text(stdout, encoding="utf-8")
-            if stderr:
-                (workspace / "claude_error.txt").write_text(stderr, encoding="utf-8")
+            # Combine output
+            output_text = "\n".join(output_parts)
 
             # Track files after execution
             files_after = self._get_workspace_files(workspace)
-            files_modified = sorted(list(files_after - files_before))
+            new_files = files_after - files_before
 
-            # Extract commands executed (best effort from output)
-            commands_executed = self._extract_commands(stdout)
+            # Combine tracked modifications with detected new files
+            all_modified_files = sorted(list(files_modified.union(new_files)))
+
+            # Exit code: 0 for success, 1 for error
+            exit_code = 0 if success else 1
 
             logger.info(
                 f"Task {task_id} completed in {execution_time}s "
-                f"(exit code: {exit_code}, files modified: {len(files_modified)})"
+                f"(exit code: {exit_code}, files: {len(all_modified_files)})"
             )
 
-            # Log warning if non-zero exit code
-            if exit_code != 0:
-                logger.warning(f"Task {task_id} exited with code {exit_code}")
-                if stderr:
-                    logger.warning(f"stderr: {stderr[:500]}")
+            return output_text, all_modified_files, commands_executed, exit_code
 
-            return stdout, files_modified, commands_executed, exit_code
-
-        except subprocess.TimeoutExpired:
-            logger.error(f"Task {task_id} timed out after {timeout}s")
-            raise TimeoutError(f"Task execution timed out after {timeout}s")
+        except CLINotFoundError:
+            logger.error("Claude Code CLI not found")
+            raise RuntimeError(
+                "Claude Code CLI not found. "
+                "Please install with: npm install -g @anthropic-ai/claude-code"
+            )
+        except ProcessError as e:
+            logger.error(f"Claude Code process error: {e}")
+            raise RuntimeError(f"Claude Code process failed: {e}")
+        except CLIJSONDecodeError as e:
+            logger.error(f"Failed to parse Claude Code output: {e}")
+            raise RuntimeError(f"Failed to parse Claude Code output: {e}")
         except Exception as e:
             logger.error(f"Failed to execute task {task_id}: {e}")
             raise
@@ -271,13 +332,11 @@ Please complete this task and provide a summary of what you did at the end.
         """
         files = set()
         exclude_patterns = {
-            "task_prompt.txt",
-            "claude_output.txt",
-            "claude_error.txt",
             ".git",
             ".gitignore",
             "__pycache__",
             ".DS_Store",
+            "node_modules",
         }
 
         try:
@@ -304,35 +363,6 @@ Please complete this task and provide a summary of what you did at the end.
             logger.warning(f"Error scanning workspace files: {e}")
 
         return files
-
-    def _extract_commands(self, output: str) -> List[str]:
-        """Extract bash commands from Claude Code output
-
-        This is a heuristic - Claude Code doesn't explicitly report commands.
-        We try to extract from common patterns in the output.
-
-        Args:
-            output: Claude Code stdout
-
-        Returns:
-            List of extracted commands
-        """
-        commands = []
-
-        # Look for common bash execution patterns in output
-        # This is best-effort and may not catch everything
-        lines = output.split('\n')
-
-        for i, line in enumerate(lines):
-            # Look for lines that indicate bash execution
-            if 'bash' in line.lower() or 'command' in line.lower() or '$' in line:
-                # Try to extract the actual command
-                # This is very heuristic and may need refinement
-                stripped = line.strip()
-                if stripped.startswith('$'):
-                    commands.append(stripped[1:].strip())
-
-        return commands
 
     def cleanup_workspace(self, task_id: int, force: bool = False):
         """Clean up task workspace
