@@ -108,13 +108,25 @@ class SlackBot:
         channel_id: str,
         response_url: str,
     ):
-        """Handle /task command for serious work"""
+        """Handle /task command for serious work
+
+        Usage: /task <description> [--project=<project_name>]
+        """
         if not args:
-            self.send_response(response_url, "Usage: /task <description>")
+            self.send_response(response_url, "Usage: /task <description> [--project=<project_name>]")
             return
 
         description = args.strip()
         note: Optional[str] = None
+        project_name: Optional[str] = None
+
+        # Parse --project flag
+        if "--project=" in description:
+            import re
+            match = re.search(r'--project=(\S+)', description)
+            if match:
+                project_name = match.group(1)
+                description = description.replace(f"--project={project_name}", "").strip()
 
         if "--serious" in description:
             description = description.replace("--serious", "").strip()
@@ -136,6 +148,7 @@ class SlackBot:
             response_url=response_url,
             user_id=user_id,
             note=note,
+            project_name=project_name,
         )
 
     def handle_think_command(
@@ -178,13 +191,22 @@ class SlackBot:
         response_url: str,
         user_id: str,
         note: Optional[str] = None,
+        project_name: Optional[str] = None,
     ):
         """Create a task and send a Slack response"""
         try:
+            # Generate project_id from project_name (simple slug)
+            project_id = None
+            if project_name:
+                import re
+                project_id = re.sub(r'[^a-z0-9-]', '-', project_name.lower())
+
             task = self.task_queue.add_task(
                 description=description,
                 priority=priority,
                 slack_user_id=user_id,
+                project_id=project_id,
+                project_name=project_name,
             )
 
             if priority == TaskPriority.SERIOUS:
@@ -192,12 +214,13 @@ class SlackBot:
             else:
                 priority_label = "🟡 Thought"
 
-            message = f"{priority_label}\nTask #{task.id} added to queue\n```{description}```"
+            project_info = f"\n📁 Project: {project_name}" if project_name else ""
+            message = f"{priority_label}\nTask #{task.id} added to queue{project_info}\n```{description}```"
             if note:
                 message = f"{note}\n\n{message}"
 
             self.send_response(response_url, message)
-            logger.info(f"Task {task.id} added by {user_id}")
+            logger.info(f"Task {task.id} added by {user_id}" + (f" [Project: {project_name}]" if project_name else ""))
 
         except Exception as e:
             self.send_response(response_url, f"Failed to add task: {str(e)}")
@@ -328,7 +351,7 @@ class SlackBot:
             logger.error(f"Failed to send thread message: {e}")
 
     def handle_credits_command(self, response_url: str):
-        """Handle /credits command"""
+        """Handle /credits command - shows budget and usage information"""
         try:
             if not self.scheduler:
                 self.send_response(response_url, "Scheduler not available")
@@ -337,11 +360,30 @@ class SlackBot:
             credit_status = self.scheduler.get_credit_status()
             window = credit_status["current_window"]
             queue = credit_status["queue"]
+            budget = credit_status.get("budget", {})
+
+            # Build budget section
+            time_icon = "🌙" if budget.get("is_nighttime") else "☀️"
+            time_period = budget.get("time_period", "unknown")
+            budget_section = ""
+            if budget:
+                remaining = budget.get("remaining_budget_usd", 0)
+                quota = budget.get("current_quota_usd", 0)
+                today_total = budget.get("today_total_usage_usd", 0)
+                budget_section = (
+                    f"{time_icon} {time_period.capitalize()} Budget\n"
+                    f"Remaining: ${remaining:.2f} / ${quota:.2f}\n"
+                    f"Today Total: ${today_total:.2f}\n"
+                    f"\n"
+                )
 
             message = (
-                f"💳 Credit Status\n"
-                f"Window: {window['time_remaining_minutes']}m remaining\n"
-                f"Executed: {window['tasks_executed']}\n"
+                f"💳 Usage & Budget Status\n"
+                f"\n"
+                f"{budget_section}"
+                f"⏱️ Credit Window\n"
+                f"Time Remaining: {window['time_remaining_minutes']}m\n"
+                f"Tasks Executed: {window['tasks_executed']}\n"
                 f"\n"
                 f"📋 Queue:\n"
                 f"Pending: {queue['pending']}\n"
