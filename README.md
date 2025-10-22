@@ -60,7 +60,8 @@ Visit https://api.slack.com/apps and create a new app:
 
 **Create Slash Commands**
 Settings > Slash Commands > Create New Command:
-- `/task` - Add new task
+- `/task` - Add serious task
+- `/think` - Capture random thought
 - `/status` - Check queue status
 - `/results` - Get task results
 - `/credits` - Check credit window
@@ -96,7 +97,7 @@ Set:
 
 ```bash
 # Terminal 1: Start the daemon
-python -m sleepless_agent.daemon
+sleepless daemon
 
 # Terminal 2 (optional): Monitor logs
 tail -f logs/agent.log
@@ -114,7 +115,8 @@ INFO - Sleepless Agent starting...
 
 | Command | Purpose | Example |
 |---------|---------|---------|
-| `/task` | Add task | `/task Add OAuth2 support --serious` |
+| `/task` | Add serious task | `/task Add OAuth2 support` |
+| `/think` | Capture random thought | `/think Explore async ideas` |
 | `/status` | Queue status | `/status` |
 | `/results` | Get task output | `/results 42` |
 | `/priority` | Change priority | `/priority 15 serious` |
@@ -127,6 +129,36 @@ INFO - Sleepless Agent starting...
 | `/credits` | Credit window status (5-hour windows) |
 | `/health` | System health (CPU, memory, disk) |
 | `/metrics` | Performance stats (success rate, duration) |
+
+## Command Line Interface
+
+Install the project (or run within the repo) and use the bundled CLI:
+
+```bash
+python -m sleepless_agent.interfaces.cli task "Ship release checklist"
+# or, after installing the package:
+sleepless status
+```
+
+The CLI mirrors the Slack slash commands:
+
+| Command | Purpose | Example |
+|---------|---------|---------|
+| `task <description>` | Queue a serious task | `task "Build onboarding flow"` |
+| `think <description>` | Capture a random thought | `think "Explore async patterns"` |
+| `status` | Show queue snapshot | `status` |
+| `results <id>` | Inspect a task | `results 7` |
+| `priority <id> random|serious` | Change priority | `priority 7 random` |
+| `cancel <id>` | Cancel a pending task | `cancel 9` |
+| `credits [--hours N]` | Summarize recent usage | `credits --hours 2` |
+| `health` | Run health checks | `health` |
+| `metrics` | Aggregate performance metrics | `metrics` |
+
+Override storage locations when needed:
+
+```bash
+sleepless --db-path ./tmp/tasks.db --results-path ./tmp/results status
+```
 
 ## Architecture
 
@@ -225,14 +257,14 @@ The agent intelligently processes different task types:
 
 1. **Random Thoughts** - Auto-commits to `random-ideas` branch
    ```
-   /task Research async patterns in Rust
-   /task What's the best way to implement caching?
+   /think Research async patterns in Rust
+   /think What's the best way to implement caching?
    ```
 
 2. **Serious Jobs** - Creates feature branch and PR, requires review
    ```
-   /task Add authentication to user service --serious
-   /task Refactor payment processing module --serious
+   /task Add authentication to user service
+   /task Refactor payment processing module
    ```
 
 ## Development
@@ -303,23 +335,23 @@ launchctl list | grep sleepless
 
 ### Daily Brainstorm
 ```
-/task Research new Rust async libraries
-/task Compare Python web frameworks
-/task Ideas for improving API performance
+/think Research new Rust async libraries
+/think Compare Python web frameworks
+/think Ideas for improving API performance
 /status
 ```
 
 ### Production Fix
 ```
-/task Fix authentication bug in login endpoint --serious
+/task Fix authentication bug in login endpoint
 /results <id>    # Get the PR link
 # Review and merge PR
 ```
 
 ### Code Audit
 ```
-/task Security audit of user service --serious
-/task Performance analysis of payment module --serious
+/task Security audit of user service
+/task Performance analysis of payment module
 /credits         # Monitor window usage
 ```
 

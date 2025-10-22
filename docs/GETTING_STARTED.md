@@ -36,6 +36,7 @@ Settings > Slash Commands > Create New Command
 
 Add these commands:
 - `/task` → Request URL: (leave empty for Socket Mode)
+- `/think`
 - `/status`
 - `/results`
 - `/credits`
@@ -70,7 +71,7 @@ Fill in:
 ### 5. Run Agent
 
 ```bash
-python -m sleepless_agent.daemon
+sleepless daemon
 ```
 
 You should see:
@@ -85,16 +86,16 @@ INFO - Sleepless Agent starting...
 
 **Random Thoughts** (default)
 ```
-/task Research async patterns in Rust
-/task What's the best way to implement caching?
+/think Research async patterns in Rust
+/think What's the best way to implement caching?
 ```
 - Auto-committed to `random-ideas` branch
 - Fills idle time when no serious tasks pending
 
 **Serious Jobs** (high priority)
 ```
-/task Add authentication to user service --serious
-/task Refactor payment processing module --serious
+/task Add authentication to user service
+/task Refactor payment processing module
 ```
 - Creates feature branch: `task/{id}-{description}`
 - Creates pull request when complete
@@ -111,15 +112,45 @@ INFO - Sleepless Agent starting...
 
 **Throughout Day:**
 ```
-/task Fix bug in authentication flow --serious
-/task Analyze database query performance
-/task Should we migrate to async/await?
+/task Fix bug in authentication flow
+/think Analyze database query performance
+/think Should we migrate to async/await?
 ```
 
 **Check Results:**
 ```
 /results 42    # Get task #42 output
 /credits       # See credit usage
+```
+
+### Command Line Interface
+
+The CLI offers the same capabilities without Slack:
+
+```bash
+python -m sleepless_agent.interfaces.cli status
+# After installation:
+sleepless task "Draft onboarding plan"
+```
+
+CLI commands mirror the slash commands:
+
+| Command | Purpose |
+|---------|---------|
+| `task <description>` | Queue a serious task |
+| `think <description>` | Log a random thought |
+| `status` | Show queue snapshot |
+| `results <id>` | Inspect task status and errors |
+| `priority <id> random|serious` | Update priority |
+| `cancel <id>` | Cancel a pending task |
+| `credits [--hours N]` | Summarize recent executions |
+| `health` | Run system health checks |
+| `metrics` | View aggregated performance metrics |
+
+Use flags to target alternate storage locations when scripting:
+
+```bash
+sleepless --db-path ./data/tasks.db --results-path ./data/results status
 ```
 
 ## Architecture Overview
@@ -242,16 +273,16 @@ tail -100 logs/metrics.jsonl | jq .
 
 ### Process All Random Thoughts
 ```
-/task Some interesting idea 1
-/task Some interesting idea 2
-/task Some interesting idea 3
+/think Some interesting idea 1
+/think Some interesting idea 2
+/think Some interesting idea 3
 /status              # Monitor progress
 /credits             # Check credit usage
 ```
 
 ### Submit Serious Job with Context
 ```
-/task Add comprehensive error handling to API service --serious
+/task Add comprehensive error handling to API service
 # Agent reads codebase, understands context, writes implementation
 /results 15          # Get task #15 output
 # Review the PR that was created
@@ -359,11 +390,11 @@ Check current window:
 1. **Deploy as Service**
    ```bash
    # macOS (launchd)
-   cp com.sleepless-agent.plist ~/Library/LaunchAgents/
+   cp deployment/com.sleepless-agent.plist ~/Library/LaunchAgents/
    launchctl load ~/Library/LaunchAgents/com.sleepless-agent.plist
 
    # Linux (systemd)
-   sudo cp sleepless-agent.service /etc/systemd/system/
+   sudo cp deployment/sleepless-agent.service /etc/systemd/system/
    sudo systemctl enable sleepless-agent
    sudo systemctl start sleepless-agent
    ```
@@ -371,8 +402,8 @@ Check current window:
 2. **Monitor Production**
    ```bash
    # Set up alerts for failures
-   /health        # Daily check
-   /metrics       # Weekly review
+   sleepless health        # Daily check
+   sleepless metrics       # Weekly review
    ```
 
 3. **Customize Task Types**

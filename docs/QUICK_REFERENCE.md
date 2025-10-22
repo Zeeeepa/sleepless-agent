@@ -5,7 +5,8 @@
 ### 📋 Task Management
 | Command | Purpose | Example |
 |---------|---------|---------|
-| `/task` | Add task | `/task Add OAuth2 support --serious` |
+| `/task` | Add serious task | `/task Add OAuth2 support` |
+| `/think` | Capture random thought | `/think Explore async ideas` |
 | `/status` | Queue status | `/status` |
 | `/results` | Get task output | `/results 42` |
 | `/priority` | Change priority | `/priority 15 serious` |
@@ -17,6 +18,22 @@
 | `/credits` | Credit window status | `/credits` |
 | `/health` | System health | `/health` |
 | `/metrics` | Performance stats | `/metrics` |
+
+### 🖥️ Command Line Interface
+
+Run `python -m sleepless_agent.interfaces.cli` (or the `sleepless` script after installation) with these subcommands:
+
+| Command | Purpose | Example |
+|---------|---------|---------|
+| `task <description>` | Queue a serious task | `task "Refactor auth flow"` |
+| `think <description>` | Record a random thought | `think "Experiment with async"` |
+| `status` | Show queue snapshot | `status` |
+| `results <id>` | Inspect a task | `results 12` |
+| `priority <id> random|serious` | Adjust priority | `priority 12 random` |
+| `cancel <id>` | Cancel pending task | `cancel 12` |
+| `credits [--hours N]` | Summarize recent executions | `credits --hours 2` |
+| `health` | Run health checks | `health` |
+| `metrics` | Aggregate metrics | `metrics` |
 
 ## Setup (5 minutes)
 
@@ -30,7 +47,7 @@ cp .env.example .env
 nano .env  # Add SLACK and ANTHROPIC tokens
 
 # 3. Run
-python -m sleepless_agent.daemon
+sleepless daemon
 ```
 
 ## Slack App Setup
@@ -38,7 +55,7 @@ python -m sleepless_agent.daemon
 1. api.slack.com/apps → Create New App
 2. Enable Socket Mode (Settings > Socket Mode)
 3. Add OAuth scopes: `chat:write`, `commands`, `app_mentions:read`
-4. Create slash commands: `/task`, `/status`, `/results`, `/priority`, `/cancel`, `/credits`, `/health`, `/metrics`
+4. Create slash commands: `/task`, `/think`, `/status`, `/results`, `/priority`, `/cancel`, `/credits`, `/health`, `/metrics`
 5. Install app to workspace
 6. Copy tokens to .env
 
@@ -46,8 +63,8 @@ python -m sleepless_agent.daemon
 
 | Type | Command | Behavior |
 |------|---------|----------|
-| **Random Thought** | `/task idea` | Auto-commits to `random-ideas` branch |
-| **Serious Job** | `/task work --serious` | Creates PR on feature branch, requires review |
+| **Random Thought** | `/think idea` | Auto-commits to `random-ideas` branch |
+| **Serious Job** | `/task work` | Creates PR on feature branch, requires review |
 
 ## Architecture
 
@@ -181,23 +198,23 @@ When processing tasks, Claude can:
 
 ### Daily Brainstorm
 ```
-/task Research new Rust async libraries
-/task Compare Python web frameworks
-/task Ideas for improving API performance
+/think Research new Rust async libraries
+/think Compare Python web frameworks
+/think Ideas for improving API performance
 /status
 ```
 
 ### Production Fix
 ```
-/task Fix authentication bug in login endpoint --serious
+/task Fix authentication bug in login endpoint
 /results <id>    # Get the PR link
 # Review and merge PR
 ```
 
 ### Code Audit
 ```
-/task Security audit of user service --serious
-/task Performance analysis of payment module --serious
+/task Security audit of user service
+/task Performance analysis of payment module
 /credits         # Monitor window usage
 ```
 
@@ -239,10 +256,10 @@ DEBUG=false
 
 1. Read GETTING_STARTED.md for detailed setup
 2. Configure .env with your tokens
-3. Run: `python -m sleepless_agent.daemon`
+3. Run: `sleepless daemon`
 4. Test commands in Slack
 5. Deploy as service using Makefile
-6. Monitor with `/health` and `/metrics`
+6. Monitor with `sleepless health` and `sleepless metrics` (or `/health` and `/metrics` in Slack)
 
 ---
 

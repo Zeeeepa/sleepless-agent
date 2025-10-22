@@ -6,9 +6,8 @@
 	<string>com.sleepless-agent</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/usr/local/bin/python3</string>
-		<string>-m</string>
-		<string>sleepless_agent.daemon</string>
+		<string>/usr/local/bin/sleepless</string>
+		<string>daemon</string>
 	</array>
 	<key>WorkingDirectory</key>
 	<string>/Users/YOUR_USERNAME/projects/sleepless-agent</string>

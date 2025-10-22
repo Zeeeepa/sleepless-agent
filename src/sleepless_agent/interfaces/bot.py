@@ -82,6 +82,8 @@ class SlackBot:
 
         if command == "/task":
             self.handle_task_command(text, user, channel, response_url)
+        elif command == "/think":
+            self.handle_think_command(text, user, channel, response_url)
         elif command == "/status":
             self.handle_status_command(response_url)
         elif command == "/results":
@@ -106,23 +108,78 @@ class SlackBot:
         channel_id: str,
         response_url: str,
     ):
-        """Handle /task command"""
+        """Handle /task command for serious work"""
         if not args:
-            self.send_response(response_url, "Usage: /task <description> [--serious]")
+            self.send_response(response_url, "Usage: /task <description>")
             return
 
-        # Parse arguments
-        priority = TaskPriority.RANDOM
-        description = args
+        description = args.strip()
+        note: Optional[str] = None
 
-        if "--serious" in args:
-            priority = TaskPriority.SERIOUS
-            description = args.replace("--serious", "").strip()
+        if "--serious" in description:
+            description = description.replace("--serious", "").strip()
+            note = "ℹ️ `--serious` flag no longer needed; `/task` is always serious."
+
+        if "--random" in description:
+            description = description.replace("--random", "").strip()
+            note = (
+                "ℹ️ Random ideas belong in `/think`. We'll treat this as a serious task."
+            )
 
         if not description:
             self.send_response(response_url, "Please provide a task description")
             return
 
+        self._create_task(
+            description=description,
+            priority=TaskPriority.SERIOUS,
+            response_url=response_url,
+            user_id=user_id,
+            note=note,
+        )
+
+    def handle_think_command(
+        self,
+        args: str,
+        user_id: str,
+        channel_id: str,
+        response_url: str,
+    ):
+        """Handle /think command for lightweight ideas"""
+        if not args:
+            self.send_response(response_url, "Usage: /think <description>")
+            return
+
+        description = args.strip()
+
+        if "--serious" in description:
+            description = description.replace("--serious", "").strip()
+            self.send_response(
+                response_url,
+                "`/think` is for casual ideas. Use `/task` for serious work.",
+            )
+            return
+
+        if not description:
+            self.send_response(response_url, "Please provide a thought to capture")
+            return
+
+        self._create_task(
+            description=description,
+            priority=TaskPriority.RANDOM,
+            response_url=response_url,
+            user_id=user_id,
+        )
+
+    def _create_task(
+        self,
+        description: str,
+        priority: TaskPriority,
+        response_url: str,
+        user_id: str,
+        note: Optional[str] = None,
+    ):
+        """Create a task and send a Slack response"""
         try:
             task = self.task_queue.add_task(
                 description=description,
@@ -130,8 +187,15 @@ class SlackBot:
                 slack_user_id=user_id,
             )
 
-            priority_label = "🔴 SERIOUS" if priority == TaskPriority.SERIOUS else "🟡 Random"
+            if priority == TaskPriority.SERIOUS:
+                priority_label = "🔴 Serious task"
+            else:
+                priority_label = "🟡 Thought"
+
             message = f"{priority_label}\nTask #{task.id} added to queue\n```{description}```"
+            if note:
+                message = f"{note}\n\n{message}"
+
             self.send_response(response_url, message)
             logger.info(f"Task {task.id} added by {user_id}")
 
