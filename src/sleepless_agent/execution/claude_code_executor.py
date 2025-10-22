@@ -1,6 +1,7 @@
 """Claude Code SDK executor for task processing"""
 
 import logging
+import subprocess
 import time
 from pathlib import Path
 from typing import Optional, Tuple, List
@@ -45,33 +46,19 @@ class ClaudeCodeExecutor:
         logger.info(f"ClaudeCodeExecutor initialized with workspace: {self.workspace_root}")
 
     def _verify_claude_cli(self):
-        """Verify Claude Code CLI is available by attempting a test query"""
+        """Verify Claude Code CLI is available"""
         try:
-            # Simple test to verify CLI is installed
-            import asyncio
-
-            async def test_cli():
-                try:
-                    async for _ in query(
-                        prompt="test",
-                        options=ClaudeAgentOptions(max_turns=1)
-                    ):
-                        break  # Just need to verify it starts
-                    return True
-                except CLINotFoundError:
-                    return False
-                except Exception:
-                    # Other errors are OK - means CLI exists but query failed
-                    return True
-
-            # Run the test
-            result = asyncio.run(test_cli())
-            if not result:
+            result = subprocess.run(
+                ["claude", "--version"],
+                capture_output=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                logger.info("Claude Code CLI verified successfully")
+            else:
                 raise CLINotFoundError()
 
-            logger.info("Claude Code CLI verified successfully")
-
-        except CLINotFoundError:
+        except (FileNotFoundError, subprocess.TimeoutExpired):
             logger.error("Claude Code CLI not found")
             raise RuntimeError(
                 "Claude Code CLI not found. "

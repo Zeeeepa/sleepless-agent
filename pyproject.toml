@@ -22,14 +22,14 @@ classifiers = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    "anthropic>=0.34.4",
-    "slack-sdk>=4.27.2",
-    "sqlalchemy>=2.1.5",
-    "python-dotenv>=1.0.1",
-    "pydantic>=2.8.2",
-    "pydantic-settings>=2.3.4",
-    "gitpython>=3.1.43",
-    "aiosqlite>=3.2.1",
+    "anthropic",
+    "slack-sdk",
+    "sqlalchemy",
+    "python-dotenv",
+    "pydantic",
+    "pydantic-settings",
+    "gitpython",
+    "aiosqlite",
 ]
 
 [project.scripts]

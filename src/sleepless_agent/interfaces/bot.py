@@ -10,8 +10,8 @@ from slack_sdk.socket_mode import SocketModeClient
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
 
-from sleepless_agent.models import TaskPriority
-from sleepless_agent.task_queue import TaskQueue
+from sleepless_agent.core.models import TaskPriority
+from sleepless_agent.core.task_queue import TaskQueue
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +31,8 @@ class SlackBot:
 
     def start(self):
         """Start bot and listen for events"""
-        self.socket_mode_client.socket_connect()
-        self.socket_mode_client.start_listening(self.handle_event)
+        self.socket_mode_client.socket_mode_request_listeners.append(self.handle_event)
+        self.socket_mode_client.connect()
         logger.info("Slack bot started and listening for events")
 
     def stop(self):
@@ -45,13 +45,13 @@ class SlackBot:
         try:
             if req.type == "events_api":
                 self.handle_events_api(req)
-                SocketModeResponse(envelope_id=req.envelope_id).send()
+                client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
             elif req.type == "slash_commands":
                 self.handle_slash_command(req)
-                SocketModeResponse(envelope_id=req.envelope_id).send()
+                client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
         except Exception as e:
             logger.error(f"Error handling event: {e}")
-            SocketModeResponse(envelope_id=req.envelope_id).send()
+            client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
 
     def handle_events_api(self, req: SocketModeRequest):
         """Handle events API"""
@@ -247,7 +247,7 @@ class SlackBot:
     def send_message(self, channel: str, message: str):
         """Send message to channel"""
         try:
-            self.client.chat_postMessage(channel=channel, text=message)
+            self.client.chat_postMessage(channel=channel, text=message, mrkdwn=True)
         except SlackApiError as e:
             logger.error(f"Failed to send message: {e}")
 
@@ -258,6 +258,7 @@ class SlackBot:
                 channel=channel,
                 thread_ts=thread_ts,
                 text=message,
+                mrkdwn=True,
             )
         except SlackApiError as e:
             logger.error(f"Failed to send thread message: {e}")

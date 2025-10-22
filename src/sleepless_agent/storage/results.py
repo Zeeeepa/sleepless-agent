@@ -9,7 +9,7 @@ from typing import Optional
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from sleepless_agent.models import Result
+from sleepless_agent.core.models import Result
 
 logger = logging.getLogger(__name__)
 
