@@ -21,40 +21,13 @@ A 24/7 AI assistant daemon that continuously works on tasks via Slack. Uses Clau
 
 ## Quick Start
 
-### 1. Clone and Setup
+### 1. Install
 
 ```bash
-# Clone repository
-git clone <repo-url>
-cd sleepless-agent
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # or `venv\Scripts\activate` on Windows
-
-# Install dependencies
-pip install -r requirements.txt
+pip install sleepless-agent
 ```
 
-### 2. Configure
-
-```bash
-# Copy environment template
-cp .env.example .env
-
-# Edit .env with your credentials
-nano .env
-```
-
-Required:
-- **Claude Code CLI**: Install from [claude.ai/code](https://claude.ai/code) and ensure `claude` is in PATH
-- `SLACK_BOT_TOKEN`: Slack bot token (starts with `xoxb-`)
-- `SLACK_APP_TOKEN`: Slack app token (starts with `xapp-`)
-
-Optional:
-- `CLAUDE_CODE_BINARY_PATH`: Custom path to claude binary (default: `claude` from PATH)
-
-### 3. Setup Slack App
+### 2. Setup Slack App
 
 1. Go to [api.slack.com/apps](https://api.slack.com/apps)
 2. Create a new app or use existing workspace
@@ -69,6 +42,20 @@ Optional:
    - `/results` - Get task results
    - `/priority` - Change task priority
    - `/cancel` - Cancel pending task
+6. Get your tokens:
+   - `SLACK_BOT_TOKEN`: Slack bot token (starts with `xoxb-`)
+   - `SLACK_APP_TOKEN`: Slack app token (starts with `xapp-`)
+
+### 3. Configure Environment
+
+Set your Slack tokens as environment variables:
+
+```bash
+export SLACK_BOT_TOKEN="xoxb-..."
+export SLACK_APP_TOKEN="xapp-..."
+```
+
+Or create a `.env` file in your working directory with the above variables.
 
 ### 4. Run
 
