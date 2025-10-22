@@ -28,6 +28,8 @@ class TaskQueue:
         context: Optional[dict] = None,
         slack_user_id: Optional[str] = None,
         slack_thread_ts: Optional[str] = None,
+        project_id: Optional[str] = None,
+        project_name: Optional[str] = None,
     ) -> Task:
         """Add new task to queue"""
         session = self.SessionLocal()
@@ -38,10 +40,14 @@ class TaskQueue:
                 context=json.dumps(context) if context else None,
                 assigned_to=slack_user_id,
                 slack_thread_ts=slack_thread_ts,
+                project_id=project_id,
+                project_name=project_name,
             )
             session.add(task)
             session.commit()
-            logger.info(f"Added task {task.id}: {description[:50]}...")
+
+            project_info = f" [Project: {project_name}]" if project_name else ""
+            logger.info(f"Added task {task.id}: {description[:50]}...{project_info}")
             return task
         except Exception as e:
             session.rollback()
