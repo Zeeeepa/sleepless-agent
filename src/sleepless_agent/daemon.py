@@ -7,15 +7,15 @@ import sys
 import time
 from pathlib import Path
 
-from sleepless_agent.bot import SlackBot
-from sleepless_agent.claude_code_executor import ClaudeCodeExecutor
+from sleepless_agent.interfaces.bot import SlackBot
+from sleepless_agent.execution.claude_code_executor import ClaudeCodeExecutor
 from sleepless_agent.config import get_config
-from sleepless_agent.git_manager import GitManager
-from sleepless_agent.models import TaskPriority, TaskStatus, init_db
-from sleepless_agent.monitor import HealthMonitor, PerformanceLogger
-from sleepless_agent.results import ResultManager
-from sleepless_agent.scheduler import SmartScheduler
-from sleepless_agent.task_queue import TaskQueue
+from sleepless_agent.storage.git_manager import GitManager
+from sleepless_agent.core.models import TaskPriority, TaskStatus, init_db
+from sleepless_agent.monitoring.monitor import HealthMonitor, PerformanceLogger
+from sleepless_agent.storage.results import ResultManager
+from sleepless_agent.core.scheduler import SmartScheduler
+from sleepless_agent.core.task_queue import TaskQueue
 
 # Setup logging
 logging.basicConfig(
@@ -35,6 +35,7 @@ class SleepleassAgent:
 
         # Initialize components
         self._init_directories()
+        init_db(str(self.config.agent.db_path))
         self.task_queue = TaskQueue(str(self.config.agent.db_path))
         self.scheduler = SmartScheduler(
             task_queue=self.task_queue,
@@ -42,7 +43,6 @@ class SleepleassAgent:
         )
         self.claude = ClaudeCodeExecutor(
             workspace_root=str(self.config.agent.workspace_root),
-            claude_binary=self.config.claude_code.binary_path,
             default_timeout=self.config.claude_code.default_timeout,
         )
         self.results = ResultManager(
@@ -253,9 +253,15 @@ class SleepleassAgent:
                 if git_pr_url:
                     git_info += f"\n🔗 PR: {git_pr_url}"
 
+                # Limit output to 3500 chars for Slack (safe under 4000 limit)
+                output_limit = 3500
+                truncated_output = result_output[:output_limit]
+                if len(result_output) > output_limit:
+                    truncated_output += "\n\n_[Output truncated - see result file for full content]_"
+
                 message = (
                     f"{priority_icon} Task #{task.id} completed in {processing_time}s{files_info}{commands_info}{git_info}\n"
-                    f"```{result_output[:500]}{'...' if len(result_output) > 500 else ''}```"
+                    f"```{truncated_output}```"
                 )
                 self.bot.send_message(task.assigned_to, message)
 
