@@ -1,6 +1,6 @@
 # Sleepless Agent
 
-A 24/7 AI assistant daemon that continuously works on tasks via Slack. Uses Claude Code CLI to process both random thoughts and serious jobs automatically with isolated workspaces.
+A 24/7 AI assistant daemon that continuously works on tasks via Slack. Uses Claude Code CLI via Python Agent SDK to process both random thoughts and serious jobs automatically with isolated workspaces.
 
 ## About
 - Maintained by Context Machine Lab
@@ -15,7 +15,7 @@ A 24/7 AI assistant daemon that continuously works on tasks via Slack. Uses Clau
 - 🎯 **Hybrid Autonomy**: Auto-applies random thoughts, requires review for serious jobs
 - ⚡ **Smart Scheduling**: Optimizes task execution based on priorities
 - 📊 **Task Queue**: SQLite-backed persistent task management
-- 🔌 **Claude Code CLI**: Uses Claude Code for code generation, research, documentation, etc.
+- 🔌 **Claude Code SDK**: Uses Python Agent SDK to interface with Claude Code CLI
 - 🏗️ **Isolated Workspaces**: Each task gets its own workspace for true parallelism
 - 📝 **Result Storage**: All outputs saved with metadata for future reference
 
@@ -148,7 +148,7 @@ Result Manager (Storage + Git)
 - **daemon.py**: Main event loop, task orchestration
 - **bot.py**: Slack interface, command parsing
 - **task_queue.py**: Task CRUD, priority scheduling
-- **claude_code_executor.py**: Claude Code CLI wrapper with isolated workspace management
+- **claude_code_executor.py**: Python Agent SDK wrapper with isolated workspace management
 - **results.py**: Result storage, file management
 - **models.py**: SQLAlchemy models for Task, Result
 - **config.py**: Configuration management
@@ -256,8 +256,8 @@ sqlite3 data/tasks.db "SELECT * FROM tasks;"
 - Check logs: `tail -f logs/agent.log`
 
 **Tasks not executing?**
-- Verify Claude Code CLI is installed: `claude --version`
-- Check Claude Code is in PATH or set CLAUDE_CODE_BINARY_PATH
+- Verify Claude Code CLI is installed: `npm list -g @anthropic-ai/claude-code`
+- Verify Python Agent SDK is installed: `pip show claude-agent-sdk`
 - Review error messages in logs
 - Check workspace permissions
 
