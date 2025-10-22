@@ -68,21 +68,36 @@ class ClaudeCodeExecutor:
             logger.warning(f"Could not verify Claude Code CLI: {e}")
             # Don't fail initialization - let it fail on actual execution if needed
 
-    def create_task_workspace(self, task_id: int, init_git: bool = False) -> Path:
-        """Create isolated workspace for task
+    def create_task_workspace(
+        self,
+        task_id: int,
+        init_git: bool = False,
+        project_id: Optional[str] = None,
+        project_name: Optional[str] = None,
+    ) -> Path:
+        """Create workspace for task - project-based if project_id provided, else task-specific
 
         Args:
             task_id: Task ID
             init_git: Whether to initialize git repo in workspace
+            project_id: Optional project ID for shared workspace
+            project_name: Optional project name (for logging)
 
         Returns:
             Path to created workspace
         """
-        workspace = self.workspace_root / f"task_{task_id}"
+        # Use project-based workspace if project_id provided, else task-specific
+        if project_id:
+            workspace = self.workspace_root / f"project_{project_id}"
+            workspace_type = f"project workspace '{project_name or project_id}'"
+        else:
+            workspace = self.workspace_root / f"task_{task_id}"
+            workspace_type = f"task workspace {task_id}"
+
         workspace.mkdir(parents=True, exist_ok=True)
 
-        # Optionally initialize git
-        if init_git:
+        # Optionally initialize git (only if not already initialized)
+        if init_git and not (workspace / ".git").exists():
             try:
                 import subprocess
                 subprocess.run(
@@ -102,11 +117,11 @@ class ClaudeCodeExecutor:
                     cwd=workspace,
                     capture_output=True,
                 )
-                logger.info(f"Initialized git in workspace: {workspace}")
+                logger.info(f"Initialized git in {workspace_type}: {workspace}")
             except Exception as e:
                 logger.warning(f"Failed to initialize git in workspace: {e}")
 
-        logger.info(f"Created workspace: {workspace}")
+        logger.info(f"Using {workspace_type}: {workspace}")
         return workspace
 
     async def execute_task(
@@ -116,6 +131,8 @@ class ClaudeCodeExecutor:
         task_type: str = "general",
         priority: str = "random",
         timeout: Optional[int] = None,
+        project_id: Optional[str] = None,
+        project_name: Optional[str] = None,
     ) -> Tuple[str, List[str], List[str], int]:
         """Execute task with Claude Code SDK
 
@@ -125,16 +142,20 @@ class ClaudeCodeExecutor:
             task_type: Type of task (code, research, brainstorm, etc.)
             priority: Task priority (random or serious)
             timeout: Timeout in seconds (not directly supported by SDK)
+            project_id: Optional project ID for shared workspace
+            project_name: Optional project name (for logging)
 
         Returns:
-            Tuple of (output_text, files_modified, commands_executed, exit_code)
+            Tuple of (output_text, files_modified, commands_executed, exit_code, usage_metrics)
         """
         timeout = timeout or self.default_timeout
 
         try:
-            # Create workspace
+            # Create workspace (project-based if project_id provided)
             init_git = (priority == "serious")
-            workspace = self.create_task_workspace(task_id, init_git)
+            workspace = self.create_task_workspace(
+                task_id, init_git, project_id, project_name
+            )
 
             # Build enhanced prompt
             prompt = self._build_prompt(description, task_type, priority)
@@ -142,11 +163,17 @@ class ClaudeCodeExecutor:
             # Track files before execution
             files_before = self._get_workspace_files(workspace)
 
-            # Track tool usage
+            # Track tool usage and usage metrics
             files_modified = set()
             commands_executed = []
             output_parts = []
             success = True
+            usage_metrics = {
+                "total_cost_usd": None,
+                "duration_ms": None,
+                "duration_api_ms": None,
+                "num_turns": None,
+            }
 
             # Execute Claude Code via SDK
             logger.info(f"Executing Claude Code SDK for task {task_id}...")
@@ -189,6 +216,12 @@ class ClaudeCodeExecutor:
                     if message.result:
                         output_parts.append(f"\n[Result: {message.result}]")
 
+                    # Capture usage metrics
+                    usage_metrics["total_cost_usd"] = message.total_cost_usd
+                    usage_metrics["duration_ms"] = message.duration_ms
+                    usage_metrics["duration_api_ms"] = message.duration_api_ms
+                    usage_metrics["num_turns"] = message.num_turns
+
                     logger.info(
                         f"Task {task_id} completed in {message.duration_ms}ms "
                         f"(API time: {message.duration_api_ms}ms, turns: {message.num_turns})"
@@ -217,7 +250,7 @@ class ClaudeCodeExecutor:
                 f"(exit code: {exit_code}, files: {len(all_modified_files)})"
             )
 
-            return output_text, all_modified_files, commands_executed, exit_code
+            return output_text, all_modified_files, commands_executed, exit_code, usage_metrics
 
         except CLINotFoundError:
             logger.error("Claude Code CLI not found")

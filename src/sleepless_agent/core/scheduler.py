@@ -1,17 +1,172 @@
-"""Smart task scheduler with credit tracking"""
+"""Smart task scheduler with usage tracking and time-based quotas"""
 
 import logging
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import List, Optional
 
-from .models import Task, TaskPriority, TaskStatus
+from sqlalchemy.orm import Session
+
+from .models import Task, TaskPriority, TaskStatus, UsageMetric
 from .task_queue import TaskQueue
 
 logger = logging.getLogger(__name__)
 
 
+class TimeOfDay:
+    """Classify time of day for budget allocation"""
+
+    NIGHT_START_HOUR = 20  # 8 PM
+    NIGHT_END_HOUR = 8  # 8 AM
+
+    @classmethod
+    def is_nighttime(cls, dt: Optional[datetime] = None) -> bool:
+        """Check if given datetime is nighttime (8 PM - 8 AM)"""
+        if dt is None:
+            dt = datetime.utcnow()
+
+        hour = dt.hour
+        # Night: 20-23 or 0-7
+        return hour >= cls.NIGHT_START_HOUR or hour < cls.NIGHT_END_HOUR
+
+    @classmethod
+    def get_time_label(cls, dt: Optional[datetime] = None) -> str:
+        """Get human-readable time label"""
+        return "night" if cls.is_nighttime(dt) else "daytime"
+
+
+class BudgetManager:
+    """Manage daily/monthly budgets with time-based allocation"""
+
+    def __init__(
+        self,
+        session: Session,
+        daily_budget_usd: float = 10.0,
+        night_quota_percent: float = 90.0,
+    ):
+        """Initialize budget manager
+
+        Args:
+            session: Database session for querying usage
+            daily_budget_usd: Daily budget in USD (default: $10)
+            night_quota_percent: Percentage of daily budget for nighttime (default: 90%)
+        """
+        self.session = session
+        self.daily_budget_usd = Decimal(str(daily_budget_usd))
+        self.night_quota_percent = Decimal(str(night_quota_percent))
+        self.day_quota_percent = Decimal("100") - self.night_quota_percent
+
+    def get_usage_in_period(
+        self, start_time: datetime, end_time: Optional[datetime] = None
+    ) -> Decimal:
+        """Get total usage in USD for a time period"""
+        if end_time is None:
+            end_time = datetime.utcnow()
+
+        metrics = (
+            self.session.query(UsageMetric)
+            .filter(
+                UsageMetric.created_at >= start_time,
+                UsageMetric.created_at < end_time,
+            )
+            .all()
+        )
+
+        total = Decimal("0")
+        for metric in metrics:
+            if metric.total_cost_usd:
+                try:
+                    total += Decimal(metric.total_cost_usd)
+                except Exception as e:
+                    logger.warning(f"Failed to parse cost {metric.total_cost_usd}: {e}")
+
+        return total
+
+    def get_today_usage(self) -> Decimal:
+        """Get total usage for today (UTC midnight to now)"""
+        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        return self.get_usage_in_period(today_start)
+
+    def get_current_time_period_usage(self) -> Decimal:
+        """Get usage for current time period (night or day)"""
+        now = datetime.utcnow()
+        is_night = TimeOfDay.is_nighttime(now)
+
+        if is_night:
+            # Night period: either from 8 PM yesterday or midnight today
+            today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            night_start = today.replace(hour=TimeOfDay.NIGHT_START_HOUR)
+
+            # If before 8 AM, night started yesterday
+            if now.hour < TimeOfDay.NIGHT_END_HOUR:
+                night_start = (today - timedelta(days=1)).replace(
+                    hour=TimeOfDay.NIGHT_START_HOUR
+                )
+
+            return self.get_usage_in_period(night_start)
+        else:
+            # Day period: 8 AM to 8 PM today
+            today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_start = today.replace(hour=TimeOfDay.NIGHT_END_HOUR)
+            return self.get_usage_in_period(day_start)
+
+    def get_current_quota(self) -> Decimal:
+        """Get budget quota for current time period"""
+        is_night = TimeOfDay.is_nighttime()
+
+        if is_night:
+            quota = self.daily_budget_usd * (self.night_quota_percent / Decimal("100"))
+        else:
+            quota = self.daily_budget_usd * (self.day_quota_percent / Decimal("100"))
+
+        return quota
+
+    def get_remaining_budget(self) -> Decimal:
+        """Get remaining budget for current time period"""
+        quota = self.get_current_quota()
+        usage = self.get_current_time_period_usage()
+        remaining = quota - usage
+        return max(Decimal("0"), remaining)
+
+    def is_budget_available(self, estimated_cost: Decimal = Decimal("0.50")) -> bool:
+        """Check if budget is available for a task
+
+        Args:
+            estimated_cost: Estimated cost in USD (default: $0.50 per task)
+
+        Returns:
+            True if budget available, False otherwise
+        """
+        remaining = self.get_remaining_budget()
+        return remaining >= estimated_cost
+
+    def get_budget_status(self) -> dict:
+        """Get comprehensive budget status"""
+        is_night = TimeOfDay.is_nighttime()
+        time_label = TimeOfDay.get_time_label()
+
+        quota = self.get_current_quota()
+        usage = self.get_current_time_period_usage()
+        remaining = self.get_remaining_budget()
+        today_usage = self.get_today_usage()
+
+        return {
+            "time_period": time_label,
+            "is_nighttime": is_night,
+            "daily_budget_usd": float(self.daily_budget_usd),
+            "current_quota_usd": float(quota),
+            "current_usage_usd": float(usage),
+            "remaining_budget_usd": float(remaining),
+            "today_total_usage_usd": float(today_usage),
+            "quota_allocation": {
+                "night_percent": float(self.night_quota_percent),
+                "day_percent": float(self.day_quota_percent),
+            },
+        }
+
+
 class CreditWindow:
-    """Tracks credit usage in 5-hour windows"""
+    """Tracks credit usage in 5-hour windows (legacy, kept for backwards compatibility)"""
 
     WINDOW_SIZE_HOURS = 5
 
@@ -39,12 +194,35 @@ class CreditWindow:
 
 
 class SmartScheduler:
-    """Intelligent task scheduler with credit management"""
+    """Intelligent task scheduler with budget management and time-based quotas"""
 
-    def __init__(self, task_queue: TaskQueue, max_parallel_tasks: int = 3):
-        """Initialize scheduler"""
+    def __init__(
+        self,
+        task_queue: TaskQueue,
+        max_parallel_tasks: int = 3,
+        daily_budget_usd: float = 10.0,
+        night_quota_percent: float = 90.0,
+    ):
+        """Initialize scheduler
+
+        Args:
+            task_queue: Task queue instance
+            max_parallel_tasks: Maximum parallel tasks (default: 3)
+            daily_budget_usd: Daily budget in USD (default: $10)
+            night_quota_percent: Percentage for night usage (default: 90%)
+        """
         self.task_queue = task_queue
         self.max_parallel_tasks = max_parallel_tasks
+
+        # Budget management with time-based allocation
+        session = self.task_queue.SessionLocal()
+        self.budget_manager = BudgetManager(
+            session=session,
+            daily_budget_usd=daily_budget_usd,
+            night_quota_percent=night_quota_percent,
+        )
+
+        # Legacy credit window support
         self.active_windows: List[CreditWindow] = []
         self.current_window: Optional[CreditWindow] = None
         self._init_current_window()
@@ -60,8 +238,18 @@ class SmartScheduler:
             logger.info(f"New credit window started: {self.current_window}")
 
     def get_next_tasks(self) -> List[Task]:
-        """Get next tasks to execute respecting concurrency and priorities"""
+        """Get next tasks to execute respecting concurrency, priorities, and budget"""
         self._init_current_window()
+
+        # Check if budget is available
+        if not self.budget_manager.is_budget_available():
+            time_label = TimeOfDay.get_time_label()
+            remaining = self.budget_manager.get_remaining_budget()
+            logger.warning(
+                f"Budget exhausted for {time_label} period "
+                f"(remaining: ${remaining:.4f}). Skipping task scheduling."
+            )
+            return []
 
         # Get in-progress tasks
         in_progress = self.task_queue.get_in_progress_tasks()
@@ -72,31 +260,93 @@ class SmartScheduler:
 
         # Get pending tasks in priority order
         pending = self.task_queue.get_pending_tasks(limit=available_slots)
+
+        # Log budget info when scheduling
+        if pending:
+            budget_status = self.budget_manager.get_budget_status()
+            logger.info(
+                f"Scheduling {len(pending)} task(s) during {budget_status['time_period']} "
+                f"(Budget: ${budget_status['remaining_budget_usd']:.2f} remaining)"
+            )
+
         return pending
 
     def schedule_task(
         self,
         description: str,
         priority: TaskPriority = TaskPriority.RANDOM,
+        project_id: Optional[str] = None,
+        project_name: Optional[str] = None,
     ) -> Task:
         """Schedule a new task"""
-        task = self.task_queue.add_task(description=description, priority=priority)
+        task = self.task_queue.add_task(
+            description=description,
+            priority=priority,
+            project_id=project_id,
+            project_name=project_name,
+        )
 
         # Log scheduling decision
+        project_info = f" [Project: {project_name}]" if project_name else ""
         if priority == TaskPriority.SERIOUS:
-            logger.info(f"🔴 Serious task scheduled: #{task.id}")
+            logger.info(f"🔴 Serious task scheduled: #{task.id}{project_info}")
         else:
-            logger.info(f"🟡 Random thought scheduled: #{task.id}")
+            logger.info(f"🟡 Random thought scheduled: #{task.id}{project_info}")
 
         return task
 
+    def record_task_usage(
+        self,
+        task_id: int,
+        total_cost_usd: Optional[float] = None,
+        duration_ms: Optional[int] = None,
+        duration_api_ms: Optional[int] = None,
+        num_turns: Optional[int] = None,
+        project_id: Optional[str] = None,
+    ):
+        """Record API usage metrics for a completed task
+
+        Args:
+            task_id: Task ID
+            total_cost_usd: Total cost in USD
+            duration_ms: Total duration in milliseconds
+            duration_api_ms: API call duration
+            num_turns: Number of conversation turns
+            project_id: Optional project ID for aggregation
+        """
+        session = self.task_queue.SessionLocal()
+        try:
+            usage = UsageMetric(
+                task_id=task_id,
+                total_cost_usd=str(total_cost_usd) if total_cost_usd is not None else None,
+                duration_ms=duration_ms,
+                duration_api_ms=duration_api_ms,
+                num_turns=num_turns,
+                project_id=project_id,
+            )
+            session.add(usage)
+            session.commit()
+
+            if total_cost_usd is not None:
+                logger.info(
+                    f"Recorded usage for task {task_id}: "
+                    f"${total_cost_usd:.4f} ({num_turns} turns, {duration_ms}ms)"
+                )
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Failed to record usage for task {task_id}: {e}")
+        finally:
+            session.close()
+
     def get_credit_status(self) -> dict:
-        """Get current credit usage status"""
+        """Get current credit usage status with budget information"""
         self._init_current_window()
 
-        # Calculate estimated credit usage
-        # Rough estimate: 100K input tokens = 1 credit, 1M output tokens = 1 credit
+        # Get queue status
         status = self.task_queue.get_queue_status()
+
+        # Get budget status
+        budget_status = self.budget_manager.get_budget_status()
 
         return {
             "current_window": {
@@ -105,6 +355,7 @@ class SmartScheduler:
                 "time_remaining_minutes": self.current_window.time_remaining_minutes(),
                 "tasks_executed": self.current_window.tasks_executed,
             },
+            "budget": budget_status,
             "queue": status,
             "max_parallel": self.max_parallel_tasks,
         }

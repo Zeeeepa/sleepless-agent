@@ -50,6 +50,10 @@ class Task(Base):
     assigned_to = Column(String(255), nullable=True)  # Slack user ID
     slack_thread_ts = Column(String(255), nullable=True)  # Slack thread timestamp for updates
 
+    # Project grouping - tasks with same project_id share workspace and context
+    project_id = Column(String(255), nullable=True)  # Project identifier for context sharing
+    project_name = Column(String(255), nullable=True)  # Human-readable project name
+
     def __repr__(self):
         return f"<Task(id={self.id}, priority={self.priority}, status={self.status})>"
 
@@ -80,6 +84,29 @@ class Result(Base):
 
     def __repr__(self):
         return f"<Result(id={self.id}, task_id={self.task_id})>"
+
+
+class UsageMetric(Base):
+    """Track API usage and costs for budget management"""
+    __tablename__ = "usage_metrics"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(Integer, nullable=False)
+
+    # API usage details
+    total_cost_usd = Column(Text, nullable=True)  # Stored as text to preserve precision
+    duration_ms = Column(Integer, nullable=True)  # Total duration in milliseconds
+    duration_api_ms = Column(Integer, nullable=True)  # API call duration
+    num_turns = Column(Integer, nullable=True)  # Number of conversation turns
+
+    # Timing
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Project tracking
+    project_id = Column(String(255), nullable=True)  # Link to project for aggregation
+
+    def __repr__(self):
+        return f"<UsageMetric(id={self.id}, task_id={self.task_id}, cost=${self.total_cost_usd})>"
 
 
 def init_db(db_path: str) -> Session:

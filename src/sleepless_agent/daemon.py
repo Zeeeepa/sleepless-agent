@@ -40,6 +40,8 @@ class SleepleassAgent:
         self.scheduler = SmartScheduler(
             task_queue=self.task_queue,
             max_parallel_tasks=self.config.agent.max_parallel_tasks,
+            daily_budget_usd=10.0,  # TODO: make configurable
+            night_quota_percent=90.0,  # 90% for night, 10% for day
         )
         self.claude = ClaudeCodeExecutor(
             workspace_root=str(self.config.agent.workspace_root),
@@ -147,12 +149,14 @@ class SleepleassAgent:
 
             # Execute with Claude Code SDK (async)
             start_time = time.time()
-            result_output, files_modified, commands_executed, exit_code = await self.claude.execute_task(
+            result_output, files_modified, commands_executed, exit_code, usage_metrics = await self.claude.execute_task(
                 task_id=task.id,
                 description=task.description,
                 task_type="general",
                 priority=task.priority.value,
                 timeout=self.config.agent.task_timeout_seconds,
+                project_id=task.project_id,
+                project_name=task.project_name,
             )
             processing_time = int(time.time() - start_time)
 
@@ -227,6 +231,16 @@ class SleepleassAgent:
 
             # Mark as completed
             self.task_queue.mark_completed(task.id, result_id=result.id)
+
+            # Record API usage metrics
+            self.scheduler.record_task_usage(
+                task_id=task.id,
+                total_cost_usd=usage_metrics.get("total_cost_usd"),
+                duration_ms=usage_metrics.get("duration_ms"),
+                duration_api_ms=usage_metrics.get("duration_api_ms"),
+                num_turns=usage_metrics.get("num_turns"),
+                project_id=task.project_id,
+            )
 
             # Log performance metrics
             self.monitor.record_task_completion(processing_time, success=True)
