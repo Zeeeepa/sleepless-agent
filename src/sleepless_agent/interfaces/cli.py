@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import shutil
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -73,7 +75,7 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def command_task(ctx: CLIContext, description: str, priority: TaskPriority) -> int:
+def command_task(ctx: CLIContext, description: str, priority: TaskPriority, project_name: Optional[str] = None) -> int:
     """Create a task with the given priority."""
 
     description = description.strip()
@@ -81,9 +83,32 @@ def command_task(ctx: CLIContext, description: str, priority: TaskPriority) -> i
         print("Description cannot be empty", file=sys.stderr)
         return 1
 
-    task = ctx.task_queue.add_task(description=description, priority=priority)
+    # Parse --project=<name> from description (for consistency with bot)
+    import re
+    parsed_project = None
+    if "--project=" in description:
+        match = re.search(r'--project=(\S+)', description)
+        if match:
+            parsed_project = match.group(1)
+            description = description.replace(f"--project={parsed_project}", "").strip()
+
+    # Prefer argparse --project flag over parsed one
+    final_project_name = project_name or parsed_project
+
+    # Generate project_id from project_name (simple slug)
+    project_id = None
+    if final_project_name:
+        project_id = re.sub(r'[^a-z0-9-]', '-', final_project_name.lower())
+
+    task = ctx.task_queue.add_task(
+        description=description,
+        priority=priority,
+        project_id=project_id,
+        project_name=final_project_name,
+    )
     label = "Serious" if priority == TaskPriority.SERIOUS else "Thought"
-    print(f"{label} task #{task.id} queued:\n{description}")
+    project_info = f" [Project: {final_project_name}]" if final_project_name else ""
+    print(f"{label} task #{task.id} queued{project_info}:\n{description}")
     return 0
 
 
@@ -254,6 +279,116 @@ def command_metrics(ctx: CLIContext) -> int:
     return 0
 
 
+def _slugify_project(identifier: str) -> str:
+    """Convert project name/id to slugified project_id (auto-detect)."""
+    return re.sub(r'[^a-z0-9-]', '-', identifier.lower())
+
+
+def command_ls(ctx: CLIContext) -> int:
+    """List all projects with task counts and status."""
+
+    projects = ctx.task_queue.get_projects()
+    if not projects:
+        print("No projects found")
+        return 0
+
+    print("Projects:")
+    print(f"{'ID':<20} {'Name':<20} {'Tasks':>6} {'Status':<20}")
+    print("-" * 70)
+
+    for proj in projects:
+        proj_id = proj['project_id']
+        proj_name = proj['project_name']
+        total = proj['total_tasks']
+        pending = proj['pending']
+        in_progress = proj['in_progress']
+
+        status_parts = []
+        if pending > 0:
+            status_parts.append(f"{pending} pending")
+        if in_progress > 0:
+            status_parts.append(f"{in_progress} in_progress")
+        status = ", ".join(status_parts) or "idle"
+
+        print(f"{proj_id:<20} {proj_name:<20} {total:>6} {status:<20}")
+
+    return 0
+
+
+def command_cat(ctx: CLIContext, identifier: str) -> int:
+    """Show detailed project information."""
+
+    project_id = _slugify_project(identifier)
+    project = ctx.task_queue.get_project_by_id(project_id)
+
+    if not project:
+        print(f"Project not found: {identifier} (slug: {project_id})", file=sys.stderr)
+        return 1
+
+    print(f"Project: {project['project_name']} ({project['project_id']})")
+    print(f"Workspace: workspace/project_{project['project_id']}/")
+    print(f"Tasks: {project['total_tasks']} total")
+    print(f"  - Pending    : {project['pending']}")
+    print(f"  - In Progress: {project['in_progress']}")
+    print(f"  - Completed  : {project['completed']}")
+    print(f"  - Failed     : {project['failed']}")
+    print(f"Created: {project['created_at']}")
+
+    if project['tasks']:
+        print("\nRecent tasks:")
+        for task in project['tasks']:
+            status_icon = {
+                'completed': '✓',
+                'in_progress': '→',
+                'pending': '○',
+                'failed': '✗',
+                'cancelled': '◌',
+            }.get(task['status'], '?')
+            print(f"  {status_icon} #{task['id']} [{task['status']}] {task['description']}")
+
+    return 0
+
+
+def command_rm(ctx: CLIContext, identifier: str, keep_workspace: bool = False) -> int:
+    """Delete a project and optionally its workspace."""
+
+    project_id = _slugify_project(identifier)
+    project = ctx.task_queue.get_project_by_id(project_id)
+
+    if not project:
+        print(f"Project not found: {identifier} (slug: {project_id})", file=sys.stderr)
+        return 1
+
+    # Confirm deletion
+    print(f"About to delete project '{project['project_name']}' ({project_id})")
+    print(f"This will delete {project['total_tasks']} task(s)")
+
+    if not keep_workspace:
+        print(f"Workspace will be deleted: workspace/project_{project_id}/")
+    else:
+        print(f"Workspace will be kept: workspace/project_{project_id}/")
+
+    response = input("Continue? (y/N): ").strip().lower()
+    if response != 'y':
+        print("Cancelled")
+        return 0
+
+    # Delete tasks from database
+    count = ctx.task_queue.delete_project(project_id)
+    print(f"Deleted {count} task(s) from database")
+
+    # Optionally delete workspace directory
+    if not keep_workspace:
+        workspace_path = Path("workspace") / f"project_{project_id}"
+        if workspace_path.exists():
+            shutil.rmtree(workspace_path)
+            print(f"Deleted workspace directory: {workspace_path}")
+        else:
+            print(f"Workspace directory not found: {workspace_path}")
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct the CLI argument parser."""
 
@@ -264,9 +399,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     task_parser = subparsers.add_parser("task", help="Queue a serious task")
     task_parser.add_argument("description", nargs=argparse.REMAINDER, help="Task description")
+    task_parser.add_argument("-p", "--project", help="Project name to associate with the task")
 
     think_parser = subparsers.add_parser("think", help="Capture a random thought")
     think_parser.add_argument("description", nargs=argparse.REMAINDER, help="Thought description")
+    think_parser.add_argument("-p", "--project", help="Project name to associate with the thought")
 
     subparsers.add_parser("status", help="Show queue status")
 
@@ -291,6 +428,20 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("health", help="Run health checks")
     subparsers.add_parser("metrics", help="Show aggregated performance metrics")
 
+    # Project management commands
+    subparsers.add_parser("ls", help="List all projects")
+
+    cat_parser = subparsers.add_parser("cat", help="Show project details")
+    cat_parser.add_argument("project", help="Project ID or name")
+
+    rm_parser = subparsers.add_parser("rm", help="Delete a project")
+    rm_parser.add_argument("project", help="Project ID or name")
+    rm_parser.add_argument(
+        "--keep-workspace",
+        action="store_true",
+        help="Keep workspace directory when deleting project",
+    )
+
     return parser
 
 
@@ -306,13 +457,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         description = " ".join(args.description).strip()
         if not description:
             parser.error("task requires a description")
-        return command_task(ctx, description, TaskPriority.SERIOUS)
+        return command_task(ctx, description, TaskPriority.SERIOUS, args.project)
 
     if args.command == "think":
         description = " ".join(args.description).strip()
         if not description:
             parser.error("think requires a description")
-        return command_task(ctx, description, TaskPriority.RANDOM)
+        return command_task(ctx, description, TaskPriority.RANDOM, args.project)
 
     if args.command == "status":
         return command_status(ctx)
@@ -334,6 +485,15 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.command == "metrics":
         return command_metrics(ctx)
+
+    if args.command == "ls":
+        return command_ls(ctx)
+
+    if args.command == "cat":
+        return command_cat(ctx, args.project)
+
+    if args.command == "rm":
+        return command_rm(ctx, args.project, args.keep_workspace)
 
     parser.error(f"Unknown command: {args.command}")
     return 1

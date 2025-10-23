@@ -9,6 +9,32 @@ A 24/7 AI assistant daemon that continuously works on tasks via Slack. Uses Clau
 - Automates task intake, execution, and reporting via Slack + Claude integration
 - Designed for continuous operation with isolated workspaces and automated git hygiene
 
+## Full Precedure
+
+  1. Command arrives via CLI (sleepless task "...") or Slack (/task ...)
+  2. TaskQueue stores it in SQLite database with status PENDING
+  3. Daemon polls every 5 seconds, calling _process_tasks()
+  4. SmartScheduler decides if task can execute:
+    - Checks budget (time-based quotas: 90% night, 10% day)
+    - Checks available parallel slots
+    - Prioritizes SERIOUS tasks over RANDOM thoughts
+    - Returns list of tasks to execute
+  5. Daemon executes via _execute_task():
+    - Marks task as IN_PROGRESS
+    - Creates isolated workspace
+    - Calls ClaudeCodeExecutor
+  6. ClaudeCodeExecutor runs the task:
+    - Builds enhanced prompt based on task type/priority
+    - Calls Claude SDK with streaming
+    - Tracks file modifications and commands
+    - Returns results with metrics
+  7. Daemon completes the flow:
+    - Commits to git (for SERIOUS tasks)
+    - Stores results in database
+    - Marks as COMPLETED or FAILED
+    - Sends Slack notification
+
+
 ## Features
 
 - 🤖 **Continuous Operation**: Runs 24/7 daemon, always ready for new tasks
@@ -153,6 +179,15 @@ The CLI mirrors the Slack slash commands:
 | `credits [--hours N]` | Summarize recent usage | `credits --hours 2` |
 | `health` | Run health checks | `health` |
 | `metrics` | Aggregate performance metrics | `metrics` |
+| `ls` | List all projects | `ls` |
+| `cat <project>` | Show project details | `cat my-app` or `cat "My App"` |
+| `rm <project> [--keep-workspace]` | Delete a project | `rm my-app` or `rm my-app --keep-workspace` |
+
+**Project Management Notes:**
+- `cat` and `rm` accept both project IDs (slugified, e.g., `my-app`) and human-readable names (e.g., `"My App"`)
+- Project IDs are auto-slugified: `My App` → `my-app` (lowercase, spaces to hyphens)
+- `rm` requires confirmation before deletion
+- Use `--keep-workspace` flag to preserve project files on disk when deleting
 
 Override storage locations when needed:
 
