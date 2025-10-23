@@ -1,11 +1,12 @@
 """Main agent daemon - runs continuously"""
 
 import asyncio
-import logging
 import signal
 import sys
 import time
 from pathlib import Path
+
+from loguru import logger
 
 from sleepless_agent.interfaces.bot import SlackBot
 from sleepless_agent.execution.claude_code_executor import ClaudeCodeExecutor
@@ -17,12 +18,9 @@ from sleepless_agent.storage.results import ResultManager
 from sleepless_agent.core.scheduler import SmartScheduler
 from sleepless_agent.core.task_queue import TaskQueue
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
+# Setup loguru
+logger.remove()  # Remove default handler
+logger.add(sys.stderr, format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}", level="INFO")
 
 
 class SleepleassAgent:

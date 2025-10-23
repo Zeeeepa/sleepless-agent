@@ -1,12 +1,11 @@
 """Tool implementations for Claude to use (file editing, bash execution, etc)"""
 
 import json
-import logging
 import subprocess
 from pathlib import Path
 from typing import Any, Optional
 
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 class ToolExecutor:

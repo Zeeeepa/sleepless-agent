@@ -1,9 +1,9 @@
 """Slack bot interface for task management"""
 
 import json
-import logging
 from typing import Optional
 
+from loguru import logger
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from slack_sdk.socket_mode import SocketModeClient
@@ -12,8 +12,6 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 
 from sleepless_agent.core.models import TaskPriority
 from sleepless_agent.core.task_queue import TaskQueue
-
-logger = logging.getLogger(__name__)
 
 
 class SlackBot:

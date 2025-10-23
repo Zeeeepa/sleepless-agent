@@ -1,14 +1,13 @@
 """Git integration for auto-commits and PR creation"""
 
 import json
-import logging
 import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 class GitManager:
