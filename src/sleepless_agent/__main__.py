@@ -18,7 +18,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return cli_main(args)
 
     # If first arg is "daemon", import and run the daemon (lazy import)
-    from sleepless_agent.daemon import main as daemon_main
+    from sleepless_agent.core.daemon import main as daemon_main
     return daemon_main()
 
 

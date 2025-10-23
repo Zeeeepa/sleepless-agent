@@ -1,14 +1,12 @@
 """Claude API executor for task processing"""
 
 import json
-import logging
 from typing import Optional
 
 from anthropic import Anthropic
+from loguru import logger
 
 from sleepless_agent.utils.tools import ToolExecutor
-
-logger = logging.getLogger(__name__)
 
 # Task type prompts
 TASK_PROMPTS = {

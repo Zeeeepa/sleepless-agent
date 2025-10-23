@@ -1,16 +1,14 @@
 """Smart task scheduler with usage tracking and time-based quotas"""
 
-import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import List, Optional
 
+from loguru import logger
 from sqlalchemy.orm import Session
 
 from .models import Task, TaskPriority, TaskStatus, UsageMetric
 from .task_queue import TaskQueue
-
-logger = logging.getLogger(__name__)
 
 
 class TimeOfDay:

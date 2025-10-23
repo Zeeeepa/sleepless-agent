@@ -1,6 +1,5 @@
 """Claude Code SDK executor for task processing"""
 
-import logging
 import subprocess
 import time
 from pathlib import Path
@@ -18,8 +17,7 @@ from claude_agent_sdk import (
     ResultMessage,
     TextBlock,
 )
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 class ClaudeCodeExecutor:

@@ -1,13 +1,12 @@
 """System monitoring and health checks"""
 
 import json
-import logging
 import psutil
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 class HealthMonitor:

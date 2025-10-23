@@ -1,16 +1,14 @@
 """Task queue management"""
 
 import json
-import logging
 from datetime import datetime
 from typing import List, Optional
 
+from loguru import logger
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from .models import Task, TaskPriority, TaskStatus
-
-logger = logging.getLogger(__name__)
 
 
 class TaskQueue:

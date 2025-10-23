@@ -21,17 +21,17 @@ setup:
 	@echo "✓ Setup complete. Edit .env with your tokens"
 
 run:
-	python -m sleepless_agent.daemon
+	sleepless daemon
 
 dev:
-	PYTHONUNBUFFERED=1 python -m sleepless_agent.daemon
+	PYTHONUNBUFFERED=1 sleepless daemon
 
 logs:
 	tail -f logs/agent.log
 
 test:
 	@echo "Testing imports..."
-	python -c "from sleepless_agent.daemon import SleepleassAgent; print('✓ Imports OK')"
+	python -c "from sleepless_agent.core.daemon import SleepleassAgent; print('✓ Imports OK')"
 
 db:
 	sqlite3 data/tasks.db "SELECT id, description, status, priority FROM tasks LIMIT 10;"
@@ -78,7 +78,7 @@ stats:
 
 status:
 	@echo "=== Agent Status ==="
-	@pgrep -f "sleepless_agent.daemon" > /dev/null && echo "✓ Daemon running" || echo "✗ Daemon not running"
+	@pgrep -f "sleepless_agent" > /dev/null && echo "✓ Daemon running" || echo "✗ Daemon not running"
 	@test -f .env && echo "✓ .env configured" || echo "✗ .env missing"
 	@test -f data/tasks.db && echo "✓ Database exists" || echo "✗ Database missing"
 	@echo ""

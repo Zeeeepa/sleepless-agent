@@ -1,17 +1,15 @@
 """Result storage and git integration"""
 
 import json
-import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from loguru import logger
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from sleepless_agent.core.models import Result
-
-logger = logging.getLogger(__name__)
 
 
 class ResultManager:

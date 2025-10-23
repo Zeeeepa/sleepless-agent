@@ -4,19 +4,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+from loguru import logger
+
 from sleepless_agent.config import get_config
 from sleepless_agent.core import TaskPriority, TaskQueue, init_db
 from sleepless_agent.monitoring.monitor import HealthMonitor
-
-
-LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -167,7 +165,7 @@ def _load_metrics(logs_dir: Path) -> list[dict]:
             try:
                 entries.append(json.loads(line))
             except json.JSONDecodeError:  # pragma: no cover - log noise
-                LOGGER.warning("Failed to parse metrics line: %s", line)
+                logger.warning("Failed to parse metrics line: {}", line)
     return entries
 
 
@@ -301,8 +299,6 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     parser = build_parser()
     args = parser.parse_args(argv)
-
-    logging.basicConfig(level=logging.INFO)
 
     ctx = build_context(args)
 
