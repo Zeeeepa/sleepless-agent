@@ -1,5 +1,6 @@
 """Claude Code SDK executor for task processing"""
 
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -38,6 +39,15 @@ class ClaudeCodeExecutor:
         self.default_timeout = default_timeout
         self.workspace_root.mkdir(parents=True, exist_ok=True)
 
+        # Create workspace subdirectories
+        self.tasks_dir = self.workspace_root / "tasks"
+        self.projects_dir = self.workspace_root / "projects"
+        self.shared_dir = self.workspace_root / "shared"
+
+        self.tasks_dir.mkdir(parents=True, exist_ok=True)
+        self.projects_dir.mkdir(parents=True, exist_ok=True)
+        self.shared_dir.mkdir(parents=True, exist_ok=True)
+
         # Verify Claude Code is available
         self._verify_claude_cli()
 
@@ -66,9 +76,38 @@ class ClaudeCodeExecutor:
             logger.warning(f"Could not verify Claude Code CLI: {e}")
             # Don't fail initialization - let it fail on actual execution if needed
 
+    def _generate_task_name_slug(self, description: str) -> str:
+        """Generate a slug from task description
+
+        Args:
+            description: Task description
+
+        Returns:
+            Slugified name from first few words (max 30 chars)
+        """
+        # Get first 3-4 words and join them
+        words = description.split()[:4]
+        slug = '-'.join(words)
+
+        # Remove non-alphanumeric chars except hyphens
+        slug = re.sub(r'[^a-z0-9-]', '', slug.lower())
+
+        # Remove multiple hyphens
+        slug = re.sub(r'-+', '-', slug)
+
+        # Remove leading/trailing hyphens
+        slug = slug.strip('-')
+
+        # Truncate to 30 chars
+        slug = slug[:30]
+
+        # If slug is empty, use 'task'
+        return slug if slug else 'task'
+
     def create_task_workspace(
         self,
         task_id: int,
+        task_description: str = "",
         init_git: bool = False,
         project_id: Optional[str] = None,
         project_name: Optional[str] = None,
@@ -77,6 +116,7 @@ class ClaudeCodeExecutor:
 
         Args:
             task_id: Task ID
+            task_description: Task description (for generating slug)
             init_git: Whether to initialize git repo in workspace
             project_id: Optional project ID for shared workspace
             project_name: Optional project name (for logging)
@@ -86,10 +126,12 @@ class ClaudeCodeExecutor:
         """
         # Use project-based workspace if project_id provided, else task-specific
         if project_id:
-            workspace = self.workspace_root / f"project_{project_id}"
+            workspace = self.projects_dir / f"{task_id}_{project_id}"
             workspace_type = f"project workspace '{project_name or project_id}'"
         else:
-            workspace = self.workspace_root / f"task_{task_id}"
+            # Generate slug from task description
+            task_slug = self._generate_task_name_slug(task_description)
+            workspace = self.tasks_dir / f"{task_id}_{task_slug}"
             workspace_type = f"task workspace {task_id}"
 
         workspace.mkdir(parents=True, exist_ok=True)
@@ -152,7 +194,11 @@ class ClaudeCodeExecutor:
             # Create workspace (project-based if project_id provided)
             init_git = (priority == "serious")
             workspace = self.create_task_workspace(
-                task_id, init_git, project_id, project_name
+                task_id=task_id,
+                task_description=description,
+                init_git=init_git,
+                project_id=project_id,
+                project_name=project_name
             )
 
             # Build enhanced prompt
@@ -382,6 +428,23 @@ Please complete this task and provide a summary of what you did at the end.
 
         return files
 
+    def _find_task_workspace(self, task_id: int) -> Optional[Path]:
+        """Find task workspace by ID (searches tasks/ directory)
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            Path to workspace if found, None otherwise
+        """
+        try:
+            for item in self.tasks_dir.iterdir():
+                if item.is_dir() and item.name.startswith(f"{task_id}_"):
+                    return item
+        except Exception as e:
+            logger.debug(f"Error searching for task workspace {task_id}: {e}")
+        return None
+
     def cleanup_workspace(self, task_id: int, force: bool = False):
         """Clean up task workspace
 
@@ -389,10 +452,10 @@ Please complete this task and provide a summary of what you did at the end.
             task_id: Task ID
             force: Force cleanup even if files exist (default: False)
         """
-        workspace = self.workspace_root / f"task_{task_id}"
+        workspace = self._find_task_workspace(task_id)
 
-        if not workspace.exists():
-            logger.debug(f"Workspace does not exist: {workspace}")
+        if workspace is None or not workspace.exists():
+            logger.debug(f"Workspace does not exist for task {task_id}")
             return
 
         try:
@@ -407,16 +470,16 @@ Please complete this task and provide a summary of what you did at the end.
         except Exception as e:
             logger.error(f"Failed to cleanup workspace {workspace}: {e}")
 
-    def get_workspace_path(self, task_id: int) -> Path:
+    def get_workspace_path(self, task_id: int) -> Optional[Path]:
         """Get path to task workspace
 
         Args:
             task_id: Task ID
 
         Returns:
-            Path to workspace
+            Path to workspace if found, None otherwise
         """
-        return self.workspace_root / f"task_{task_id}"
+        return self._find_task_workspace(task_id)
 
     def workspace_exists(self, task_id: int) -> bool:
         """Check if workspace exists for task
@@ -427,4 +490,4 @@ Please complete this task and provide a summary of what you did at the end.
         Returns:
             True if workspace exists
         """
-        return self.get_workspace_path(task_id).exists()
+        return self._find_task_workspace(task_id) is not None

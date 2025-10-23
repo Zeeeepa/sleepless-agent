@@ -1,6 +1,7 @@
 """Slack bot interface for task management"""
 
 import json
+import re
 from typing import Optional
 
 from loguru import logger
@@ -12,6 +13,11 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 
 from sleepless_agent.core.models import TaskPriority
 from sleepless_agent.core.task_queue import TaskQueue
+
+
+def _slugify_project(identifier: str) -> str:
+    """Convert project name/id to slugified project_id (auto-detect)."""
+    return re.sub(r'[^a-z0-9-]', '-', identifier.lower())
 
 
 class SlackBot:
@@ -96,6 +102,12 @@ class SlackBot:
             self.handle_health_command(response_url)
         elif command == "/metrics":
             self.handle_metrics_command(response_url)
+        elif command == "/ls":
+            self.handle_ls_command(response_url)
+        elif command == "/cat":
+            self.handle_cat_command(text, response_url)
+        elif command == "/rm":
+            self.handle_rm_command(text, response_url)
         else:
             self.send_response(response_url, f"Unknown command: {command}")
 
@@ -464,3 +476,109 @@ class SlackBot:
         except Exception as e:
             self.send_response(response_url, f"Failed to get metrics: {str(e)}")
             logger.error(f"Failed to get metrics: {e}")
+
+    def handle_ls_command(self, response_url: str):
+        """Handle /ls command - list all projects"""
+        try:
+            projects = self.task_queue.get_projects()
+            if not projects:
+                self.send_response(response_url, "📦 No projects found")
+                return
+
+            message = "📦 Projects\n"
+            message += "```\n"
+            message += f"{'ID':<20} {'Name':<20} {'Tasks':>6} {'Status':<20}\n"
+            message += "-" * 70 + "\n"
+
+            for proj in projects:
+                proj_id = proj['project_id']
+                proj_name = proj['project_name']
+                total = proj['total_tasks']
+                pending = proj['pending']
+                in_progress = proj['in_progress']
+
+                status_parts = []
+                if pending > 0:
+                    status_parts.append(f"{pending} pending")
+                if in_progress > 0:
+                    status_parts.append(f"{in_progress} in_progress")
+                status = ", ".join(status_parts) or "idle"
+
+                message += f"{proj_id:<20} {proj_name:<20} {total:>6} {status:<20}\n"
+
+            message += "```"
+            self.send_response(response_url, message)
+
+        except Exception as e:
+            self.send_response(response_url, f"Failed to list projects: {str(e)}")
+            logger.error(f"Failed to list projects: {e}")
+
+    def handle_cat_command(self, args: str, response_url: str):
+        """Handle /cat command - show project details"""
+        try:
+            if not args:
+                self.send_response(response_url, "Usage: /cat <project_id_or_name>")
+                return
+
+            project_id = _slugify_project(args)
+            project = self.task_queue.get_project_by_id(project_id)
+
+            if not project:
+                self.send_response(response_url, f"📦 Project not found: {args} (slug: {project_id})")
+                return
+
+            message = (
+                f"📦 Project: {project['project_name']} ({project['project_id']})\n"
+                f"📂 Workspace: workspace/project_{project['project_id']}/\n"
+                f"📋 Tasks: {project['total_tasks']} total\n"
+                f"  • Pending: {project['pending']}\n"
+                f"  • In Progress: {project['in_progress']}\n"
+                f"  • Completed: {project['completed']}\n"
+                f"  • Failed: {project['failed']}\n"
+                f"📅 Created: {project['created_at']}"
+            )
+
+            if project['tasks']:
+                message += "\n\nRecent tasks:\n"
+                for task in project['tasks']:
+                    status_icon = {
+                        'completed': '✓',
+                        'in_progress': '→',
+                        'pending': '○',
+                        'failed': '✗',
+                        'cancelled': '◌',
+                    }.get(task['status'], '?')
+                    message += f"  {status_icon} #{task['id']} [{task['status']}] {task['description']}\n"
+
+            self.send_response(response_url, message)
+
+        except Exception as e:
+            self.send_response(response_url, f"Failed to get project info: {str(e)}")
+            logger.error(f"Failed to get project info: {e}")
+
+    def handle_rm_command(self, args: str, response_url: str):
+        """Handle /rm command - delete a project with confirmation"""
+        try:
+            if not args:
+                self.send_response(response_url, "Usage: /rm <project_id_or_name>")
+                return
+
+            project_id = _slugify_project(args)
+            project = self.task_queue.get_project_by_id(project_id)
+
+            if not project:
+                self.send_response(response_url, f"📦 Project not found: {args} (slug: {project_id})")
+                return
+
+            message = (
+                f"⚠️ About to delete project '{project['project_name']}' ({project_id})\n"
+                f"This will delete {project['total_tasks']} task(s)\n"
+                f"\n"
+                f"To confirm, use:\n"
+                f"`/rm {project_id} confirm`"
+            )
+            self.send_response(response_url, message)
+
+        except Exception as e:
+            self.send_response(response_url, f"Failed to delete project: {str(e)}")
+            logger.error(f"Failed to delete project: {e}")

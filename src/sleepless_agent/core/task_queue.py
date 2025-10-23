@@ -187,3 +187,97 @@ class TaskQueue:
         if task and task.context:
             return json.loads(task.context)
         return None
+
+    def get_projects(self) -> List[dict]:
+        """Get all projects with task counts and status"""
+        session = self.SessionLocal()
+        try:
+            projects = session.query(Task.project_id, Task.project_name).filter(
+                Task.project_id.isnot(None)
+            ).distinct().all()
+
+            result = []
+            for project_id, project_name in projects:
+                if project_id is None:
+                    continue
+
+                tasks = session.query(Task).filter(Task.project_id == project_id).all()
+                pending = sum(1 for t in tasks if t.status == TaskStatus.PENDING)
+                in_progress = sum(1 for t in tasks if t.status == TaskStatus.IN_PROGRESS)
+                completed = sum(1 for t in tasks if t.status == TaskStatus.COMPLETED)
+
+                result.append({
+                    'project_id': project_id,
+                    'project_name': project_name or project_id,
+                    'total_tasks': len(tasks),
+                    'pending': pending,
+                    'in_progress': in_progress,
+                    'completed': completed,
+                })
+
+            return sorted(result, key=lambda x: x['project_id'])
+        finally:
+            session.close()
+
+    def get_project_by_id(self, project_id: str) -> Optional[dict]:
+        """Get project info by ID"""
+        session = self.SessionLocal()
+        try:
+            tasks = session.query(Task).filter(Task.project_id == project_id).all()
+            if not tasks:
+                return None
+
+            first_task = tasks[0]
+            pending = sum(1 for t in tasks if t.status == TaskStatus.PENDING)
+            in_progress = sum(1 for t in tasks if t.status == TaskStatus.IN_PROGRESS)
+            completed = sum(1 for t in tasks if t.status == TaskStatus.COMPLETED)
+            failed = sum(1 for t in tasks if t.status == TaskStatus.FAILED)
+
+            return {
+                'project_id': project_id,
+                'project_name': first_task.project_name or project_id,
+                'total_tasks': len(tasks),
+                'pending': pending,
+                'in_progress': in_progress,
+                'completed': completed,
+                'failed': failed,
+                'created_at': min(t.created_at for t in tasks),
+                'tasks': [
+                    {
+                        'id': t.id,
+                        'description': t.description[:50],
+                        'status': t.status.value,
+                        'priority': t.priority.value,
+                        'created_at': t.created_at.isoformat(),
+                    }
+                    for t in sorted(tasks, key=lambda x: x.created_at, reverse=True)[:5]
+                ]
+            }
+        finally:
+            session.close()
+
+    def get_project_tasks(self, project_id: str) -> List[Task]:
+        """Get all tasks for a project"""
+        session = self.SessionLocal()
+        try:
+            tasks = session.query(Task).filter(Task.project_id == project_id).order_by(
+                Task.created_at.desc()
+            ).all()
+            return tasks
+        finally:
+            session.close()
+
+    def delete_project(self, project_id: str) -> int:
+        """Delete all tasks in a project. Returns count of deleted tasks."""
+        session = self.SessionLocal()
+        try:
+            count = session.query(Task).filter(Task.project_id == project_id).delete()
+            session.commit()
+            logger.info(f"Deleted project {project_id}: {count} tasks removed")
+            return count
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Failed to delete project {project_id}: {e}")
+            raise
+        finally:
+            session.close()
