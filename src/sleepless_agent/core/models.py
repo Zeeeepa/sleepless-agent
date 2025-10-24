@@ -15,6 +15,7 @@ class TaskPriority(str, Enum):
     """Task priority levels"""
     RANDOM = "random"  # Low priority, experimental
     SERIOUS = "serious"  # High priority, needs completion
+    GENERATED = "generated"  # Auto-generated backlog filler
 
 
 class TaskStatus(str, Enum):
@@ -32,7 +33,16 @@ class Task(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     description = Column(Text, nullable=False)
-    priority = Column(SQLEnum(TaskPriority), default=TaskPriority.RANDOM, nullable=False)
+    priority = Column(
+        SQLEnum(
+            TaskPriority,
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=False,
+        ),
+        default=TaskPriority.RANDOM,
+        nullable=False,
+    )
     status = Column(SQLEnum(TaskStatus), default=TaskStatus.PENDING, nullable=False)
 
     # Timing
@@ -116,7 +126,16 @@ class TaskPool(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     description = Column(Text, nullable=False)
-    priority = Column(SQLEnum(TaskPriority), default=TaskPriority.RANDOM, nullable=False)
+    priority = Column(
+        SQLEnum(
+            TaskPriority,
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=False,
+        ),
+        default=TaskPriority.RANDOM,
+        nullable=False,
+    )
     category = Column(String(100), nullable=True)  # e.g., "refactor", "optimization", "testing"
     used = Column(Integer, default=0, nullable=False)  # How many times used
     project_id = Column(String(255), nullable=True)  # Optional project association

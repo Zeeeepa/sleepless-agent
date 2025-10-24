@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from loguru import logger
-from sqlalchemy import create_engine
+from sqlalchemy import case, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from .models import Task, TaskPriority, TaskStatus
@@ -67,14 +67,16 @@ class TaskQueue:
         """Get pending tasks sorted by priority"""
         session = self.SessionLocal()
         try:
-            # Sort: serious first, then by created_at
+            # Sort: serious first, random second, generated last
+            priority_order = case(
+                (Task.priority == TaskPriority.SERIOUS.value, 0),
+                (Task.priority == TaskPriority.RANDOM.value, 1),
+                else_=2,
+            )
             tasks = (
                 session.query(Task)
                 .filter(Task.status == TaskStatus.PENDING)
-                .order_by(
-                    Task.priority == TaskPriority.SERIOUS.value,  # Serious first
-                    Task.created_at,
-                )
+                .order_by(priority_order, Task.created_at)
                 .limit(limit)
                 .all()
             )

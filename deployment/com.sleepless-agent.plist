@@ -12,9 +12,9 @@
 	<key>WorkingDirectory</key>
 	<string>/Users/YOUR_USERNAME/projects/sleepless-agent</string>
 	<key>StandardOutPath</key>
-	<string>/Users/YOUR_USERNAME/projects/sleepless-agent/logs/daemon.log</string>
+	<string>/Users/YOUR_USERNAME/projects/sleepless-agent/workspace/data/daemon.log</string>
 	<key>StandardErrorPath</key>
-	<string>/Users/YOUR_USERNAME/projects/sleepless-agent/logs/daemon.err</string>
+	<string>/Users/YOUR_USERNAME/projects/sleepless-agent/workspace/data/daemon.err</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>

@@ -27,17 +27,17 @@ dev:
 	PYTHONUNBUFFERED=1 sleepless daemon
 
 logs:
-	tail -f logs/agent.log
+	tail -f workspace/data/agent.log
 
 test:
 	@echo "Testing imports..."
 	python -c "from sleepless_agent.core.daemon import SleepleassAgent; print('✓ Imports OK')"
 
 db:
-	sqlite3 data/tasks.db "SELECT id, description, status, priority FROM tasks LIMIT 10;"
+	sqlite3 workspace/data/tasks.db "SELECT id, description, status, priority FROM tasks LIMIT 10;"
 
 db-reset:
-	rm -f data/tasks.db data/*.db
+	rm -f workspace/data/tasks.db workspace/data/*.db
 	@echo "✓ Database cleared"
 
 clean:
@@ -74,18 +74,18 @@ uninstall-launchd:
 
 stats:
 	@echo "=== Performance Metrics (last 24h) ==="
-	@tail -1000 logs/metrics.jsonl 2>/dev/null | jq -s 'length as $$count | [.[] | select(.success == true)] | {total: $$count, successful: length, failed: ($$count - length), avg_duration: (map(.duration_seconds) | add / length | round | . as $$t | if $$t > 60 then "\($$t / 60 | floor)m\($$t % 60)s" else "\($$t)s" end)}' || echo "No metrics available"
+	@tail -1000 workspace/data/metrics.jsonl 2>/dev/null | jq -s 'length as $$count | [.[] | select(.success == true)] | {total: $$count, successful: length, failed: ($$count - length), avg_duration: (map(.duration_seconds) | add / length | round | . as $$t | if $$t > 60 then "\($$t / 60 | floor)m\($$t % 60)s" else "\($$t)s" end)}' || echo "No metrics available"
 
 status:
 	@echo "=== Agent Status ==="
 	@pgrep -f "sleepless_agent" > /dev/null && echo "✓ Daemon running" || echo "✗ Daemon not running"
 	@test -f .env && echo "✓ .env configured" || echo "✗ .env missing"
-	@test -f data/tasks.db && echo "✓ Database exists" || echo "✗ Database missing"
+	@test -f workspace/data/tasks.db && echo "✓ Database exists" || echo "✗ Database missing"
 	@echo ""
 	@echo "Queue status:"
-	@sqlite3 data/tasks.db "SELECT status, COUNT(*) FROM tasks GROUP BY status;" 2>/dev/null || echo "(no database)"
+	@sqlite3 workspace/data/tasks.db "SELECT status, COUNT(*) FROM tasks GROUP BY status;" 2>/dev/null || echo "(no database)"
 
 backup:
 	@mkdir -p backups
-	@tar czf backups/sleepless-agent-$$(date +%Y%m%d-%H%M%S).tar.gz data/ logs/ config.yaml
+	@tar czf backups/sleepless-agent-$$(date +%Y%m%d-%H%M%S).tar.gz workspace/data/ config.yaml
 	@echo "✓ Backup created"

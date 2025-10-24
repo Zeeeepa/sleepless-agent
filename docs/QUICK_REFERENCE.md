@@ -110,13 +110,13 @@ credits:
 
 ```bash
 # Live logs
-tail -f logs/agent.log
+tail -f workspace/data/agent.log
 
 # Database query
-sqlite3 data/tasks.db "SELECT * FROM tasks WHERE status='completed';"
+sqlite3 workspace/data/tasks.db "SELECT * FROM tasks WHERE status='completed';"
 
 # Performance
-tail logs/metrics.jsonl | jq .
+tail workspace/data/metrics.jsonl | jq .
 
 # Slack commands
 /status          # System status and performance stats
@@ -171,7 +171,7 @@ The agent tracks:
 - Database health
 - Uptime and operational statistics
 
-View with: `sleepless status` or `tail logs/metrics.jsonl`
+View with: `sleepless status` or `tail workspace/data/metrics.jsonl`
 
 ## Tools Available to Claude
 
@@ -217,8 +217,8 @@ SLACK_APP_TOKEN=xapp-...
 
 # Optional
 AGENT_WORKSPACE=./workspace
-AGENT_DB_PATH=./data/tasks.db
-AGENT_RESULTS_PATH=./data/results
+AGENT_DB_PATH=./workspace/data/tasks.db
+AGENT_RESULTS_PATH=./workspace/data/results
 GIT_USER_NAME=Sleepless Agent
 GIT_USER_EMAIL=agent@sleepless.local
 LOG_LEVEL=INFO

@@ -299,8 +299,10 @@ class SmartScheduler:
         project_info = f" [Project: {project_name}]" if project_name else ""
         if priority == TaskPriority.SERIOUS:
             logger.info(f"🔴 Serious task scheduled: #{task.id}{project_info}")
-        else:
+        elif priority == TaskPriority.RANDOM:
             logger.info(f"🟡 Random thought scheduled: #{task.id}{project_info}")
+        else:
+            logger.info(f"🟢 Generated task scheduled: #{task.id}{project_info}")
 
         return task
 
@@ -396,8 +398,10 @@ class SmartScheduler:
         # Priority multiplier
         if task.priority == TaskPriority.SERIOUS:
             score += 1000
-        else:
+        elif task.priority == TaskPriority.RANDOM:
             score += 100
+        elif task.priority == TaskPriority.GENERATED:
+            score += 10
 
         # Age bonus (older tasks get higher score)
         age_minutes = (datetime.utcnow() - task.created_at).total_seconds() / 60

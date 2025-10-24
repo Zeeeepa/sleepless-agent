@@ -211,8 +211,10 @@ class SlackBot:
 
             if priority == TaskPriority.SERIOUS:
                 priority_label = "🔴 Serious task"
-            else:
+            elif priority == TaskPriority.RANDOM:
                 priority_label = "🟡 Thought"
+            else:
+                priority_label = "🟢 Generated task"
 
             project_info = f"\n📁 Project: {project_name}" if project_name else ""
             message = f"{priority_label}\nTask #{task.id} added to queue{project_info}\n```{description}```"
@@ -301,7 +303,7 @@ class SlackBot:
             from pathlib import Path
             import shutil
 
-            workspace_path = Path("workspace") / f"project_{project_id}"
+            workspace_path = Path("workspace") / "projects" / project_id
             if workspace_path.exists():
                 trash_dir = Path("workspace") / "trash"
                 trash_dir.mkdir(parents=True, exist_ok=True)
@@ -423,7 +425,7 @@ class SlackBot:
                 project_id = "_".join(parts[1:-2])  # Remove "project" prefix and timestamp parts
 
                 # Restore workspace
-                workspace_path = Path("workspace") / f"project_{project_id}"
+                workspace_path = Path("workspace") / "projects" / project_id
                 if workspace_path.exists():
                     self.send_response(response_url, f"Workspace already exists at {workspace_path}")
                     return

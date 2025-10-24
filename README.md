@@ -123,7 +123,7 @@ Set:
 sleepless daemon
 
 # Terminal 2 (optional): Monitor logs
-tail -f logs/agent.log
+tail -f workspace/data/agent.log
 ```
 
 You should see:
@@ -228,11 +228,16 @@ sleepless-agent/
 │   ├── models.py           # Database models
 │   ├── results.py          # Result storage
 │   └── config.py           # Config management
-├── data/
-│   ├── tasks.db            # SQLite database
-│   └── results/            # Task output files
-├── workspace/              # Task workspaces (task_1/, task_2/, etc.)
-├── logs/                   # Log files
+├── workspace/              # All persistent data and task workspaces
+│   ├── data/               # Persistent storage
+│   │   ├── tasks.db        # SQLite database
+│   │   ├── results/        # Task output files
+│   │   ├── reports/        # Daily markdown reports
+│   │   ├── agent.log       # Application logs
+│   │   └── metrics.jsonl   # Performance metrics
+│   ├── tasks/              # Task workspaces (task_1/, task_2/, etc.)
+│   ├── projects/           # Project workspaces
+│   └── trash/              # Soft-deleted projects
 ├── config.yaml             # Configuration
 ├── .env                    # Secrets (not tracked)
 ├── requirements.txt        # Python dependencies
@@ -269,8 +274,8 @@ SLACK_APP_TOKEN=xapp-...
 
 # Optional
 AGENT_WORKSPACE=./workspace
-AGENT_DB_PATH=./data/tasks.db
-AGENT_RESULTS_PATH=./data/results
+AGENT_DB_PATH=./workspace/data/tasks.db
+AGENT_RESULTS_PATH=./workspace/data/results
 GIT_USER_NAME=Sleepless Agent
 GIT_USER_EMAIL=agent@sleepless.local
 LOG_LEVEL=INFO
@@ -323,17 +328,17 @@ DEBUG=true python -m sleepless_agent.daemon
 
 ### Real-time Logs
 ```bash
-tail -f logs/agent.log
+tail -f workspace/data/agent.log
 ```
 
 ### Database Queries
 ```bash
-sqlite3 data/tasks.db "SELECT * FROM tasks WHERE status='completed' LIMIT 5;"
+sqlite3 workspace/data/tasks.db "SELECT * FROM tasks WHERE status='completed' LIMIT 5;"
 ```
 
 ### Performance History
 ```bash
-tail -100 logs/metrics.jsonl | jq .
+tail -100 workspace/data/metrics.jsonl | jq .
 ```
 
 ### Slack Commands
@@ -383,11 +388,11 @@ launchctl list | grep sleepless
 
 | Issue | Solution |
 |-------|----------|
-| Bot not responding | Check `.env` tokens, verify Socket Mode enabled, check logs: `tail -f logs/agent.log` |
+| Bot not responding | Check `.env` tokens, verify Socket Mode enabled, check logs: `tail -f workspace/data/agent.log` |
 | Tasks not executing | Verify Claude Code CLI installed: `npm list -g @anthropic-ai/claude-code`, check workspace permissions |
 | Git commits fail | Install `gh` CLI and authenticate: `gh auth login` |
-| Out of credits | Wait for 5-hour window refresh. Review scheduler logs: `tail -f logs/agent.log | grep credit` |
-| Database locked | Close other connections, try: `rm data/tasks.db && python -m sleepless_agent.daemon` |
+| Out of credits | Wait for 5-hour window refresh. Review scheduler logs: `tail -f workspace/data/agent.log | grep credit` |
+| Database locked | Close other connections, try: `rm workspace/data/tasks.db && python -m sleepless_agent.daemon` |
 
 ## Performance Tips
 

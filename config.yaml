@@ -5,9 +5,9 @@ agent:
   name: "Sleepless Agent"
   description: "24/7 AI assistant maximizing Claude usage"
   workspace: "./workspace"
-  db_path: "./data/tasks.db"
-  results_path: "./data/results"
-  max_parallel_tasks: 3
+  db_path: "./workspace/data/tasks.db"
+  results_path: "./workspace/data/results"
+  max_parallel_tasks: 1
   task_timeout_seconds: 3600  # 1 hour
 
 # Claude settings
@@ -49,7 +49,7 @@ git:
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: "./logs/agent.log"
+  file: "./workspace/data/agent.log"
   max_size_mb: 100
   backup_count: 5
 
@@ -59,3 +59,45 @@ monitoring:
   task_queue_check_interval_seconds: 30
   auto_restart_on_error: true
   max_restart_attempts: 5
+
+# Multi-Agent Workflow Configuration
+multi_agent_workflow:
+  enabled: true
+  # Three-phase execution: Planner -> Worker -> Evaluator
+  phases:
+    planner:
+      enabled: true
+      max_turns: 10
+      timeout_seconds: 300
+    worker:
+      enabled: true
+      max_turns: 30
+      timeout_seconds: 1800
+    evaluator:
+      enabled: true
+      max_turns: 10
+      timeout_seconds: 300
+
+  # README management
+  readme:
+    auto_create: true  # Auto-create README.md if missing
+    auto_update: true  # Update README after task completion
+    preserve_history: true  # Keep task history in README
+
+  # PLAN.md management
+  plan:
+    auto_create: true  # Create PLAN.md for each task
+    preserve_plan: true  # Keep PLAN.md after completion
+    include_context: true  # Include context analysis in plan
+
+  # Pro plan usage monitoring
+  pro_plan_monitoring:
+    enabled: true
+    pause_threshold: 85.0  # Pause at 85% of 5-hour limit
+    usage_command: "claude /usage"  # CLI command to check usage
+    check_frequency: "after_task"  # When to check: after_task | before_task | both
+
+    # Auto-generation of refinement tasks
+    auto_generate_refinements: true  # Generate tasks for PARTIAL/INCOMPLETE work when usage is low
+    low_usage_threshold: 60.0  # Generate when usage < 60%
+    max_auto_tasks_per_session: 3  # Limit auto-generated tasks per session

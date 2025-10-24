@@ -240,7 +240,7 @@ if not self.budget_manager.is_budget_available():
 All three tasks work in `workspace/project_my-dashboard/`, building on each other's work.
 
 ### Example 2: Check Budget During Night
-Review scheduler logs (e.g., `tail -f logs/agent.log | grep Budget`). Example output:
+Review scheduler logs (e.g., `tail -f workspace/data/agent.log | grep Budget`). Example output:
 ```
 💳 Usage & Budget Status
 
@@ -320,7 +320,7 @@ NIGHT_END_HOUR = 6     # 6 AM
 
 ### View Budget Status
 ```bash
-tail -f logs/agent.log | grep "Budget Status"
+tail -f workspace/data/agent.log | grep "Budget Status"
 ```
 
 ### View Project Costs (future enhancement)
