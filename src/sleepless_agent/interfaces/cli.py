@@ -50,11 +50,10 @@ def build_context(args: argparse.Namespace) -> CLIContext:
 
     db_path = Path(config.agent.db_path)
     results_path = Path(config.agent.results_path)
-    logs_dir = Path("./logs")
+    logs_dir = db_path.parent  # Use same directory as db_path for metrics
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
     results_path.mkdir(parents=True, exist_ok=True)
-    logs_dir.mkdir(parents=True, exist_ok=True)
 
     # Ensure database schema exists before instantiating the queue
     init_db(str(db_path))
@@ -183,29 +182,36 @@ def command_check(ctx: CLIContext) -> int:
     metrics_table.add_column("Window", style="bold cyan")
     metrics_table.add_column("Tasks", justify="right")
     metrics_table.add_column("Success", justify="right")
+    metrics_table.add_column("Error", justify="right", style="red")
     metrics_table.add_column("Avg Time", justify="right")
 
     if metrics_summary["total"]:
         success_rate = metrics_summary["success_rate"]
+        error_rate = 100 - success_rate if success_rate is not None else None
+        success_style = "green" if success_rate and success_rate >= 80 else "yellow" if success_rate and success_rate >= 50 else "red"
         metrics_table.add_row(
             "All-Time",
             str(metrics_summary["total"]),
-            f"{success_rate:.1f}%" if success_rate is not None else "—",
+            f"[{success_style}]{success_rate:.1f}%[/]" if success_rate is not None else "—",
+            f"{error_rate:.1f}%" if error_rate is not None else "—",
             format_duration(metrics_summary["avg_duration"]),
         )
     else:
-        metrics_table.add_row("All-Time", "0", "—", "—")
+        metrics_table.add_row("All-Time", "0", "—", "—", "—")
 
     if metrics_summary["recent_total"]:
         recent_rate = metrics_summary["recent_success_rate"]
+        recent_error_rate = 100 - recent_rate if recent_rate is not None else None
+        recent_style = "green" if recent_rate and recent_rate >= 80 else "yellow" if recent_rate and recent_rate >= 50 else "red"
         metrics_table.add_row(
             "Last 24h",
             str(metrics_summary["recent_total"]),
-            f"{recent_rate:.1f}%" if recent_rate is not None else "—",
+            f"[{recent_style}]{recent_rate:.1f}%[/]" if recent_rate is not None else "—",
+            f"{recent_error_rate:.1f}%" if recent_error_rate is not None else "—",
             format_duration(metrics_summary["recent_avg_duration"]),
         )
     else:
-        metrics_table.add_row("Last 24h", "0", "—", "—")
+        metrics_table.add_row("Last 24h", "0", "—", "—", "—")
 
     metrics_panel = Panel(metrics_table, border_style="yellow")
 
@@ -264,15 +270,23 @@ def command_check(ctx: CLIContext) -> int:
     now = datetime.utcnow()
     for task in running_tasks:
         elapsed = None
+        elapsed_str = "—"
         if task.started_at:
             elapsed = (now - task.started_at).total_seconds()
+            # Color-code based on duration: green < 30m, yellow < 1h, red >= 1h
+            if elapsed < 1800:  # < 30 minutes
+                elapsed_str = f"[green]{format_duration(elapsed)}[/]"
+            elif elapsed < 3600:  # < 1 hour
+                elapsed_str = f"[yellow]{format_duration(elapsed)}[/]"
+            else:  # >= 1 hour (warning!)
+                elapsed_str = f"[red bold]⚠️ {format_duration(elapsed)}[/]"
         running_table.add_row(
             str(task.id),
             task.project_name or task.project_id or "—",
             shorten(task.description),
             task.assigned_to or "—",
             task.started_at.isoformat(sep=" ", timespec="minutes") if task.started_at else "—",
-            format_duration(elapsed),
+            elapsed_str,
         )
 
     if running_tasks:
@@ -298,12 +312,33 @@ def command_check(ctx: CLIContext) -> int:
     pending_table.add_column("Summary", overflow="fold")
 
     for task in pending_tasks:
+        # Calculate task age
+        age_seconds = (now - task.created_at).total_seconds()
+        age_str = relative_time(task.created_at)
+
+        # Color-code age: normal < 1h, yellow < 24h, red >= 24h (stale!)
+        if age_seconds < 3600:  # < 1 hour
+            age_display = age_str
+        elif age_seconds < 86400:  # < 24 hours
+            age_display = f"[yellow]{age_str}[/]"
+        else:  # >= 24 hours (stale!)
+            age_display = f"[red bold]⚠️ {age_str}[/]"
+
+        # Color-code priority
+        priority_display = task.priority.value
+        if task.priority.value == "serious":
+            priority_display = f"[red bold]{task.priority.value}[/]"
+        elif task.priority.value == "random":
+            priority_display = f"[cyan]{task.priority.value}[/]"
+        else:
+            priority_display = f"[dim]{task.priority.value}[/]"
+
         pending_table.add_row(
             str(task.id),
-            task.priority.value,
+            priority_display,
             task.project_name or task.project_id or "—",
             task.created_at.isoformat(sep=" ", timespec="minutes"),
-            relative_time(task.created_at),
+            age_display,
             shorten(task.description),
         )
 
@@ -340,6 +375,30 @@ def command_check(ctx: CLIContext) -> int:
             )
         project_panel = Panel(project_table, border_style="bright_blue")
 
+    # Recent Errors Section
+    failed_tasks = ctx.task_queue.get_failed_tasks(limit=5)
+    errors_panel = None
+    if failed_tasks:
+        errors_table = Table(
+            title=f"Recent Errors ({len(failed_tasks)})",
+            box=box.SIMPLE_HEAVY,
+            expand=True,
+        )
+        errors_table.add_column("ID", style="bold red")
+        errors_table.add_column("When", style="dim")
+        errors_table.add_column("Task", overflow="fold")
+        errors_table.add_column("Error", overflow="fold", style="red")
+
+        for task in failed_tasks:
+            error_preview = shorten(task.error_message, limit=50) if task.error_message else "Unknown error"
+            errors_table.add_row(
+                str(task.id),
+                relative_time(task.created_at),
+                shorten(task.description, limit=40),
+                error_preview,
+            )
+        errors_panel = Panel(errors_table, border_style="red")
+
     recent_tasks = ctx.task_queue.get_recent_tasks(limit=8)
     status_icons = {
         TaskStatus.COMPLETED: "✅",
@@ -361,9 +420,18 @@ def command_check(ctx: CLIContext) -> int:
 
     for task in recent_tasks:
         icon = status_icons.get(task.status, "•")
+        # Color-code status
+        status_colors = {
+            TaskStatus.COMPLETED: "green",
+            TaskStatus.IN_PROGRESS: "cyan",
+            TaskStatus.PENDING: "yellow",
+            TaskStatus.FAILED: "red",
+            TaskStatus.CANCELLED: "dim",
+        }
+        status_color = status_colors.get(task.status, "white")
         recent_table.add_row(
             str(task.id),
-            f"{icon} {task.status.value}",
+            f"[{status_color}]{icon} {task.status.value}[/]",
             task.project_name or task.project_id or "—",
             relative_time(task.created_at),
             shorten(task.description),
@@ -410,6 +478,8 @@ def command_check(ctx: CLIContext) -> int:
         ("running_section", running_panel),
         ("pending_section", pending_panel),
     ]
+    if errors_panel:
+        sections.append(("errors_section", errors_panel))
     if project_panel:
         sections.append(("projects_section", project_panel))
     sections.append(("recent_section", recent_panel))
