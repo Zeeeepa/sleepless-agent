@@ -31,6 +31,7 @@ dependencies = [
     "gitpython",
     "aiosqlite",
     "loguru",
+    "rich",
 ]
 
 [project.scripts]

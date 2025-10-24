@@ -13,9 +13,17 @@ from pathlib import Path
 from typing import Optional
 
 from loguru import logger
+from rich import box
+from rich.align import Align
+from rich.columns import Columns
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
 from sleepless_agent.config import get_config
 from sleepless_agent.core import TaskPriority, TaskQueue, init_db
+from sleepless_agent.core.models import TaskStatus
 from sleepless_agent.core.task_utils import parse_task_description, slugify_project
 from sleepless_agent.monitoring.monitor import HealthMonitor
 from sleepless_agent.monitoring.report_generator import ReportGenerator
@@ -102,100 +110,241 @@ def command_task(ctx: CLIContext, description: str, priority: TaskPriority, proj
     return 0
 
 
-def command_status(ctx: CLIContext) -> int:
-    """Print comprehensive system status (health + metrics + queue + budget)."""
+def command_check(ctx: CLIContext) -> int:
+    """Render an enriched system snapshot."""
 
-    # System health check
+    console = Console()
+
     health = ctx.monitor.check_health()
+    queue_status = ctx.task_queue.get_queue_status()
+    entries = _load_metrics(ctx.logs_dir)
+    metrics_summary = _summarize_metrics(entries)
+
+    status = health.get("status", "unknown")
+    status_lower = str(status).lower()
     status_emoji = {
         "healthy": "✅",
         "degraded": "⚠️",
         "unhealthy": "❌",
-    }.get(health["status"], "❓")
+    }.get(status_lower, "❔")
+    status_style = {
+        "healthy": "green",
+        "degraded": "yellow",
+        "unhealthy": "red",
+    }.get(status_lower, "grey50")
 
     system = health.get("system", {})
     db = health.get("database", {})
     storage = health.get("storage", {})
 
-    print(f"\n{status_emoji} System Status: {health['status'].upper()}")
-    print(f"⏱️  Uptime: {health['uptime_human']}")
-    print(f"🖥️  CPU: {system.get('cpu_percent', 'N/A')}%")
-    print(f"💾 Memory: {system.get('memory_percent', 'N/A')}%")
+    health_table = Table.grid(padding=(0, 2))
+    health_table.add_column(justify="right", style="bold cyan")
+    health_table.add_column(justify="left")
+    health_table.add_row("Status", f"{status_emoji} [bold]{str(status).upper()}[/]")
+    health_table.add_row("Uptime", health.get("uptime_human", "N/A"))
+    health_table.add_row("CPU", f"{system.get('cpu_percent', 'N/A')}%")
+    health_table.add_row("Memory", f"{system.get('memory_percent', 'N/A')}%")
+    health_table.add_row("Queue Depth", f"{queue_status['pending']} pending / {queue_status['in_progress']} running")
 
-    # Queue status
-    queue_status = ctx.task_queue.get_queue_status()
-    print(f"\n📊 Queue Status")
-    print(f"  Total      : {queue_status['total']}")
-    print(f"  Pending    : {queue_status['pending']}")
-    print(f"  In Progress: {queue_status['in_progress']}")
-    print(f"  Completed  : {queue_status['completed']}")
-    print(f"  Failed     : {queue_status['failed']}")
-
-    # All-time metrics
-    entries = _load_metrics(ctx.logs_dir)
-    if entries:
-        total = len(entries)
-        successes = sum(1 for e in entries if e.get("success"))
-        failures = total - successes
-        success_rate = (successes / total * 100) if total > 0 else 0
-        avg_duration = 0.0
-        durations = [e.get("duration_seconds", 0) for e in entries if isinstance(e.get("duration_seconds"), (int, float))]
-        if durations:
-            avg_duration = sum(durations) / len(durations)
-
-        print(f"\n📈 Performance (All-Time)")
-        print(f"  Total Tasks: {total}")
-        print(f"  Success Rate: {success_rate:.1f}% ({successes} ✓ / {failures} ✗)")
-        print(f"  Avg Duration: {avg_duration:.1f}s")
-
-    # Time-window metrics
-    cutoff = datetime.utcnow() - timedelta(hours=24)
-    recent = []
-    for entry in entries:
-        timestamp = entry.get("timestamp")
-        if not timestamp:
-            continue
-        try:
-            ts = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).replace(tzinfo=None)
-        except ValueError:
-            continue
-        if ts >= cutoff:
-            recent.append(entry)
-
-    if recent:
-        recent_successes = sum(1 for e in recent if e.get("success"))
-        print(f"\n⏰ Recent Activity (Last 24h)")
-        print(f"  Tasks Executed: {len(recent)}")
-        print(f"  Success Rate: {recent_successes / len(recent) * 100:.1f}% ({recent_successes} ✓ / {len(recent) - recent_successes} ✗)")
-
-    # Storage info
-    print(f"\n💿 Storage")
+    storage_table = Table.grid(padding=(0, 2))
+    storage_table.add_column(justify="right", style="bold cyan")
+    storage_table.add_column(justify="left")
     if db:
-        print(f"  Database: {db.get('size_mb', 'N/A')} MB (modified {db.get('modified_ago_seconds', 'N/A')}s ago)")
+        storage_table.add_row(
+            "Database",
+            f"{db.get('size_mb', 'N/A')} MB · { _format_age_seconds(db.get('modified_ago_seconds')) }",
+        )
+    else:
+        storage_table.add_row("Database", "—")
     if storage:
-        print(f"  Results: {storage.get('count', 'N/A')} files ({storage.get('total_size_mb', 'N/A')} MB)")
+        storage_table.add_row(
+            "Results",
+            f"{storage.get('count', 'N/A')} files · {storage.get('total_size_mb', 'N/A')} MB",
+        )
+    else:
+        storage_table.add_row("Results", "—")
 
-    # Projects info
+    health_panel = Panel(health_table, title="System Health", border_style=status_style)
+    storage_panel = Panel(storage_table, title="Storage", border_style="cyan")
+
+    queue_table = Table(box=box.ROUNDED, expand=True, title="Queue Summary")
+    queue_table.add_column("State", style="bold cyan")
+    queue_table.add_column("Count", justify="right", style="bold")
+    queue_table.add_row("Pending", str(queue_status["pending"]))
+    queue_table.add_row("In Progress", str(queue_status["in_progress"]))
+    queue_table.add_row("Completed", str(queue_status["completed"]))
+    queue_table.add_row("Failed", str(queue_status["failed"]))
+    queue_table.add_row("Total", str(queue_status["total"]))
+    queue_panel = Panel(queue_table, border_style="blue")
+
+    metrics_table = Table(box=box.ROUNDED, expand=True, title="Performance")
+    metrics_table.add_column("Window", style="bold cyan")
+    metrics_table.add_column("Tasks", justify="right")
+    metrics_table.add_column("Success", justify="right")
+    metrics_table.add_column("Avg Time", justify="right")
+
+    if metrics_summary["total"]:
+        success_rate = metrics_summary["success_rate"]
+        metrics_table.add_row(
+            "All-Time",
+            str(metrics_summary["total"]),
+            f"{success_rate:.1f}%" if success_rate is not None else "—",
+            _format_duration(metrics_summary["avg_duration"]),
+        )
+    else:
+        metrics_table.add_row("All-Time", "0", "—", "—")
+
+    if metrics_summary["recent_total"]:
+        recent_rate = metrics_summary["recent_success_rate"]
+        metrics_table.add_row(
+            "Last 24h",
+            str(metrics_summary["recent_total"]),
+            f"{recent_rate:.1f}%" if recent_rate is not None else "—",
+            _format_duration(metrics_summary["recent_avg_duration"]),
+        )
+    else:
+        metrics_table.add_row("Last 24h", "0", "—", "—")
+
+    metrics_panel = Panel(metrics_table, border_style="yellow")
+
+    running_tasks = ctx.task_queue.get_in_progress_tasks()
+    running_table = Table(
+        box=box.MINIMAL_DOUBLE_HEAD,
+        expand=True,
+        title=f"Active Tasks ({len(running_tasks)})",
+    )
+    running_table.add_column("ID", style="bold")
+    running_table.add_column("Project", style="cyan")
+    running_table.add_column("Description", overflow="fold")
+    running_table.add_column("Owner")
+    running_table.add_column("Started")
+    running_table.add_column("Elapsed", justify="right")
+
+    now = datetime.utcnow()
+    for task in running_tasks:
+        elapsed = None
+        if task.started_at:
+            elapsed = (now - task.started_at).total_seconds()
+        running_table.add_row(
+            str(task.id),
+            task.project_name or task.project_id or "—",
+            _shorten(task.description),
+            task.assigned_to or "—",
+            task.started_at.isoformat(sep=" ", timespec="minutes") if task.started_at else "—",
+            _format_duration(elapsed),
+        )
+
+    if running_tasks:
+        running_panel = Panel(running_table, border_style="magenta")
+    else:
+        running_panel = Panel(
+            Align.center(Text("No tasks currently running.", style="dim")),
+            title="Active Tasks",
+            border_style="magenta",
+        )
+
+    pending_tasks = ctx.task_queue.get_pending_tasks(limit=5)
+    pending_table = Table(
+        box=box.MINIMAL_DOUBLE_HEAD,
+        expand=True,
+        title=f"Next Up ({len(pending_tasks)} shown)",
+    )
+    pending_table.add_column("ID", style="bold")
+    pending_table.add_column("Priority")
+    pending_table.add_column("Project", style="cyan")
+    pending_table.add_column("Created")
+    pending_table.add_column("Age")
+    pending_table.add_column("Summary", overflow="fold")
+
+    for task in pending_tasks:
+        pending_table.add_row(
+            str(task.id),
+            task.priority.value,
+            task.project_name or task.project_id or "—",
+            task.created_at.isoformat(sep=" ", timespec="minutes"),
+            _relative_time(task.created_at),
+            _shorten(task.description),
+        )
+
+    if pending_tasks:
+        pending_panel = Panel(pending_table, border_style="green")
+    else:
+        pending_panel = Panel(
+            Align.center(Text("Queue is clear. 🎉", style="dim")),
+            title="Next Up",
+            border_style="green",
+        )
+
     projects = ctx.task_queue.get_projects()
+    project_panel = None
     if projects:
-        print(f"\n📦 Projects")
+        project_table = Table(
+            title=f"Projects ({len(projects)})",
+            box=box.ROUNDED,
+            expand=True,
+        )
+        project_table.add_column("Project", style="bold cyan")
+        project_table.add_column("Pending", justify="right")
+        project_table.add_column("In Progress", justify="right")
+        project_table.add_column("Completed", justify="right")
+        project_table.add_column("Total", justify="right")
+
         for proj in projects:
-            proj_id = proj['project_id']
-            proj_name = proj['project_name']
-            total = proj['total_tasks']
-            pending = proj['pending']
-            in_progress = proj['in_progress']
+            project_table.add_row(
+                proj["project_name"],
+                str(proj["pending"]),
+                str(proj["in_progress"]),
+                str(proj["completed"]),
+                str(proj["total_tasks"]),
+            )
+        project_panel = Panel(project_table, border_style="bright_blue")
 
-            status_parts = []
-            if pending > 0:
-                status_parts.append(f"{pending} pending")
-            if in_progress > 0:
-                status_parts.append(f"{in_progress} in_progress")
-            status = ", ".join(status_parts) or "idle"
+    recent_tasks = ctx.task_queue.get_recent_tasks(limit=8)
+    status_icons = {
+        TaskStatus.COMPLETED: "✅",
+        TaskStatus.IN_PROGRESS: "🔄",
+        TaskStatus.PENDING: "🕒",
+        TaskStatus.FAILED: "❌",
+        TaskStatus.CANCELLED: "🗑️",
+    }
+    recent_table = Table(
+        title="Recent Activity",
+        box=box.SIMPLE_HEAVY,
+        expand=True,
+    )
+    recent_table.add_column("ID", style="bold")
+    recent_table.add_column("Status")
+    recent_table.add_column("Project", style="cyan")
+    recent_table.add_column("When")
+    recent_table.add_column("Summary", overflow="fold")
 
-            print(f"  {proj_id:<20} {proj_name:<20} {total:>6} tasks ({status})")
+    for task in recent_tasks:
+        icon = status_icons.get(task.status, "•")
+        recent_table.add_row(
+            str(task.id),
+            f"{icon} {task.status.value}",
+            task.project_name or task.project_id or "—",
+            _relative_time(task.created_at),
+            _shorten(task.description),
+        )
+    recent_panel = Panel(recent_table, border_style="orange1")
 
-    print()
+    console.print()
+    console.print(Text("Sleepless Agent Status", style="bold magenta"), justify="center")
+    console.print()
+
+    console.print(Columns([health_panel, storage_panel], equal=True, expand=True))
+    console.print()
+    console.print(Columns([queue_panel, metrics_panel], equal=True, expand=True))
+    console.print()
+    console.print(Columns([running_panel, pending_panel], equal=True, expand=True))
+    console.print()
+    if project_panel:
+        console.print(project_panel)
+        console.print()
+    console.print(recent_panel)
+    console.print()
+
     return 0
 
 
@@ -284,6 +433,103 @@ def _load_metrics(logs_dir: Path) -> list[dict]:
             except json.JSONDecodeError:  # pragma: no cover - log noise
                 logger.warning("Failed to parse metrics line: {}", line)
     return entries
+
+
+def _format_duration(seconds: Optional[float]) -> str:
+    """Turn seconds into a compact human-readable duration."""
+    if seconds is None:
+        return "—"
+    seconds = int(abs(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    parts: list[str] = []
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if secs or not parts:
+        parts.append(f"{secs}s")
+    return " ".join(parts)
+
+
+def _relative_time(dt: Optional[datetime]) -> str:
+    """Return relative time string (e.g., '5m ago')."""
+    if not dt:
+        return "—"
+    now = datetime.utcnow()
+    delta = now - dt
+    suffix = "ago"
+    if delta.total_seconds() < 0:
+        delta = -delta
+        suffix = "from now"
+    return f"{_format_duration(delta.total_seconds())} {suffix}"
+
+
+def _shorten(text: str, limit: int = 70) -> str:
+    """Compress whitespace and truncate to limit with ellipsis."""
+    clean = " ".join(text.strip().split())
+    if len(clean) <= limit:
+        return clean
+    return clean[: limit - 1].rstrip() + "…"
+
+
+def _format_age_seconds(seconds: Optional[float]) -> str:
+    if seconds is None:
+        return "N/A"
+    return _format_duration(seconds) + " ago"
+
+
+def _parse_timestamp(timestamp: Optional[str]) -> Optional[datetime]:
+    if not timestamp:
+        return None
+    try:
+        return datetime.fromisoformat(timestamp.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def _summarize_metrics(entries: list[dict]) -> dict:
+    """Extract aggregate stats from metrics log entries."""
+    total = len(entries)
+    successes = sum(1 for e in entries if e.get("success"))
+    durations = [
+        e.get("duration_seconds")
+        for e in entries
+        if isinstance(e.get("duration_seconds"), (int, float))
+    ]
+    avg_duration = sum(durations) / len(durations) if durations else None
+
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    recent = []
+    for entry in entries:
+        ts = _parse_timestamp(entry.get("timestamp"))
+        if ts and ts >= cutoff:
+            recent.append(entry)
+
+    recent_total = len(recent)
+    recent_successes = sum(1 for e in recent if e.get("success"))
+    recent_durations = [
+        e.get("duration_seconds")
+        for e in recent
+        if isinstance(e.get("duration_seconds"), (int, float))
+    ]
+    recent_avg_duration = (
+        sum(recent_durations) / len(recent_durations) if recent_durations else None
+    )
+
+    def rate(success_count: int, task_count: int) -> Optional[float]:
+        if task_count == 0:
+            return None
+        return success_count / task_count * 100
+
+    return {
+        "total": total,
+        "success_rate": rate(successes, total),
+        "avg_duration": avg_duration,
+        "recent_total": recent_total,
+        "recent_success_rate": rate(recent_successes, recent_total),
+        "recent_avg_duration": recent_avg_duration,
+    }
 
 
 
@@ -494,7 +740,7 @@ def build_parser() -> argparse.ArgumentParser:
     think_parser.add_argument("description", nargs=argparse.REMAINDER, help="Thought description")
     think_parser.add_argument("-p", "--project", help="Project name to associate with the thought")
 
-    status_parser = subparsers.add_parser("status", help="Show comprehensive system status (health + metrics + queue)")
+    subparsers.add_parser("check", help="Show comprehensive system overview with rich output")
 
     cancel_parser = subparsers.add_parser("cancel", help="Move a task or project to trash")
     cancel_parser.add_argument("identifier", help="Task ID (integer) or project name/ID (string)")
@@ -532,8 +778,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             parser.error("think requires a description")
         return command_task(ctx, description, TaskPriority.RANDOM, args.project)
 
-    if args.command == "status":
-        return command_status(ctx)
+    if args.command == "check":
+        return command_check(ctx)
 
     if args.command == "cancel":
         return command_cancel(ctx, args.identifier)

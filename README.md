@@ -166,7 +166,7 @@ Install the project (or run within the repo) and use the bundled CLI:
 ```bash
 python -m sleepless_agent.interfaces.cli task "Ship release checklist"
 # or, after installing the package:
-sleepless status
+sleepless check
 ```
 
 The CLI mirrors the Slack slash commands:
@@ -400,7 +400,7 @@ launchctl list | grep sleepless
 2. **Batch serious jobs** - Reduces context switching
 3. **Monitor credits** - Watch scheduler logs for window resets
 4. **Review git history** - Check `random-ideas` branch regularly
-5. **Check metrics** - Run `sleepless status` to track performance
+5. **Check metrics** - Run `sleepless check` to track performance
 
 ## Security Notes
 

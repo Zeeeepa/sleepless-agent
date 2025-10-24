@@ -10,3 +10,4 @@ asyncio-contextmanager
 psutil
 requests
 loguru
+rich

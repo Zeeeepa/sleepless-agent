@@ -124,7 +124,7 @@ INFO - Sleepless Agent starting...
 The CLI offers the same capabilities without Slack:
 
 ```bash
-python -m sleepless_agent.interfaces.cli status
+python -m sleepless_agent.interfaces.cli check
 # After installation:
 sleepless task "Draft onboarding plan"
 ```
@@ -135,7 +135,7 @@ CLI commands mirror the slash commands:
 |---------|---------|
 | `task <description>` | Queue a serious task |
 | `think <description>` | Log a random thought |
-| `status` | Show system health, queue, and performance metrics |
+| `check` | Show system health, queue, and performance metrics |
 | `report [identifier]` | Show task details, daily reports, or project summaries (`--list` to browse reports) |
 | `cancel <identifier>` | Move a task or project to trash |
 | `trash [subcommand] [identifier]` | Manage trash (list, restore, empty) |
@@ -264,7 +264,7 @@ tail -100 workspace/data/metrics.jsonl | jq .
 
 ### Check Health
 ```bash
-sleepless status
+sleepless check
 ```
 
 ## Common Tasks
