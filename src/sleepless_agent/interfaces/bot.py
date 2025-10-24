@@ -1,7 +1,6 @@
 """Slack bot interface for task management"""
 
 import json
-import re
 from typing import Optional
 
 from loguru import logger
@@ -13,12 +12,8 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 
 from sleepless_agent.core.models import TaskPriority
 from sleepless_agent.core.task_queue import TaskQueue
+from sleepless_agent.core.task_utils import parse_task_description, slugify_project
 from sleepless_agent.monitoring.report_generator import ReportGenerator
-
-
-def _slugify_project(identifier: str) -> str:
-    """Convert project name/id to slugified project_id (auto-detect)."""
-    return re.sub(r'[^a-z0-9-]', '-', identifier.lower())
 
 
 class SlackBot:
@@ -116,34 +111,14 @@ class SlackBot:
             self.send_response(response_url, "Usage: /task <description> [--project=<project_name>]")
             return
 
-        description = args.strip()
-        note: Optional[str] = None
-        project_name: Optional[str] = None
+        description, project_name, note = parse_task_description(args)
 
-        # Parse --project flag
-        if "--project=" in description:
-            import re
-            match = re.search(r'--project=(\S+)', description)
-            if match:
-                project_name = match.group(1)
-                description = description.replace(f"--project={project_name}", "").strip()
-
-        if "--serious" in description:
-            description = description.replace("--serious", "").strip()
-            note = "ℹ️ `--serious` flag no longer needed; `/task` is always serious."
-
-        if "--random" in description:
-            description = description.replace("--random", "").strip()
-            note = (
-                "ℹ️ Random ideas belong in `/think`. We'll treat this as a serious task."
-            )
-
-        if not description:
+        if not description.strip():
             self.send_response(response_url, "Please provide a task description")
             return
 
         self._create_task(
-            description=description,
+            description=description.strip(),
             priority=TaskPriority.SERIOUS,
             response_url=response_url,
             user_id=user_id,
@@ -196,10 +171,7 @@ class SlackBot:
         """Create a task and send a Slack response"""
         try:
             # Generate project_id from project_name (simple slug)
-            project_id = None
-            if project_name:
-                import re
-                project_id = re.sub(r'[^a-z0-9-]', '-', project_name.lower())
+            project_id = slugify_project(project_name) if project_name else None
 
             task = self.task_queue.add_task(
                 description=description,
