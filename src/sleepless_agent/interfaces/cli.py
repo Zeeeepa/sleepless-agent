@@ -17,6 +17,7 @@ from loguru import logger
 from sleepless_agent.config import get_config
 from sleepless_agent.core import TaskPriority, TaskQueue, init_db
 from sleepless_agent.monitoring.monitor import HealthMonitor
+from sleepless_agent.monitoring.report_generator import ReportGenerator
 
 
 @dataclass
@@ -25,19 +26,20 @@ class CLIContext:
 
     task_queue: TaskQueue
     monitor: HealthMonitor
+    report_generator: ReportGenerator
     db_path: Path
     results_path: Path
     logs_dir: Path
 
 
 def build_context(args: argparse.Namespace) -> CLIContext:
-    """Create the CLI context using config defaults with optional overrides."""
+    """Create the CLI context using config values."""
 
     config = get_config()
 
-    db_path = Path(args.db_path or config.agent.db_path)
-    results_path = Path(args.results_path or config.agent.results_path)
-    logs_dir = Path(args.logs_dir or "./logs")
+    db_path = Path(config.agent.db_path)
+    results_path = Path(config.agent.results_path)
+    logs_dir = Path("./logs")
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
     results_path.mkdir(parents=True, exist_ok=True)
@@ -48,31 +50,18 @@ def build_context(args: argparse.Namespace) -> CLIContext:
 
     queue = TaskQueue(str(db_path))
     monitor = HealthMonitor(str(db_path), str(results_path))
+    report_generator = ReportGenerator(base_path=str(db_path.parent / "reports"))
 
     return CLIContext(
         task_queue=queue,
         monitor=monitor,
+        report_generator=report_generator,
         db_path=db_path,
         results_path=results_path,
         logs_dir=logs_dir,
     )
 
 
-def add_common_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add arguments shared by all commands."""
-
-    parser.add_argument(
-        "--db-path",
-        help="Path to the tasks SQLite database (default: from config)",
-    )
-    parser.add_argument(
-        "--results-path",
-        help="Directory that stores task results (default: from config)",
-    )
-    parser.add_argument(
-        "--logs-dir",
-        help="Directory containing agent logs (default: ./logs)",
-    )
 
 
 def command_task(ctx: CLIContext, description: str, priority: TaskPriority, project_name: Optional[str] = None) -> int:
@@ -113,65 +102,167 @@ def command_task(ctx: CLIContext, description: str, priority: TaskPriority, proj
 
 
 def command_status(ctx: CLIContext) -> int:
-    """Print queue summary."""
+    """Print comprehensive system status (health + metrics + queue + budget)."""
 
-    status = ctx.task_queue.get_queue_status()
-    print("Queue status:")
-    print(f"  Total      : {status['total']}")
-    print(f"  Pending    : {status['pending']}")
-    print(f"  In Progress: {status['in_progress']}")
-    print(f"  Completed  : {status['completed']}")
-    print(f"  Failed     : {status['failed']}")
-    return 0
+    # System health check
+    health = ctx.monitor.check_health()
+    status_emoji = {
+        "healthy": "✅",
+        "degraded": "⚠️",
+        "unhealthy": "❌",
+    }.get(health["status"], "❓")
 
+    system = health.get("system", {})
+    db = health.get("database", {})
+    storage = health.get("storage", {})
 
-def command_results(ctx: CLIContext, task_id: int) -> int:
-    """Display results for a task."""
+    print(f"\n{status_emoji} System Status: {health['status'].upper()}")
+    print(f"⏱️  Uptime: {health['uptime_human']}")
+    print(f"🖥️  CPU: {system.get('cpu_percent', 'N/A')}%")
+    print(f"💾 Memory: {system.get('memory_percent', 'N/A')}%")
 
-    task = ctx.task_queue.get_task(task_id)
-    if not task:
-        print(f"Task #{task_id} not found", file=sys.stderr)
-        return 1
+    # Queue status
+    queue_status = ctx.task_queue.get_queue_status()
+    print(f"\n📊 Queue Status")
+    print(f"  Total      : {queue_status['total']}")
+    print(f"  Pending    : {queue_status['pending']}")
+    print(f"  In Progress: {queue_status['in_progress']}")
+    print(f"  Completed  : {queue_status['completed']}")
+    print(f"  Failed     : {queue_status['failed']}")
 
-    print(f"Task #{task.id}")
-    print(f"  Status  : {task.status.value}")
-    print(f"  Priority: {task.priority.value}")
-    print(f"  Created : {task.created_at}")
-    if task.error_message:
-        print(f"  Error   : {task.error_message}")
-    if task.context:
-        print("  Context :")
+    # All-time metrics
+    entries = _load_metrics(ctx.logs_dir)
+    if entries:
+        total = len(entries)
+        successes = sum(1 for e in entries if e.get("success"))
+        failures = total - successes
+        success_rate = (successes / total * 100) if total > 0 else 0
+        avg_duration = 0.0
+        durations = [e.get("duration_seconds", 0) for e in entries if isinstance(e.get("duration_seconds"), (int, float))]
+        if durations:
+            avg_duration = sum(durations) / len(durations)
+
+        print(f"\n📈 Performance (All-Time)")
+        print(f"  Total Tasks: {total}")
+        print(f"  Success Rate: {success_rate:.1f}% ({successes} ✓ / {failures} ✗)")
+        print(f"  Avg Duration: {avg_duration:.1f}s")
+
+    # Time-window metrics
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    recent = []
+    for entry in entries:
+        timestamp = entry.get("timestamp")
+        if not timestamp:
+            continue
         try:
-            context = json.loads(task.context)
-            print(json.dumps(context, indent=2))
-        except json.JSONDecodeError:
-            print(f"    {task.context}")
+            ts = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            continue
+        if ts >= cutoff:
+            recent.append(entry)
+
+    if recent:
+        recent_successes = sum(1 for e in recent if e.get("success"))
+        print(f"\n⏰ Recent Activity (Last 24h)")
+        print(f"  Tasks Executed: {len(recent)}")
+        print(f"  Success Rate: {recent_successes / len(recent) * 100:.1f}% ({recent_successes} ✓ / {len(recent) - recent_successes} ✗)")
+
+    # Storage info
+    print(f"\n💿 Storage")
+    if db:
+        print(f"  Database: {db.get('size_mb', 'N/A')} MB (modified {db.get('modified_ago_seconds', 'N/A')}s ago)")
+    if storage:
+        print(f"  Results: {storage.get('count', 'N/A')} files ({storage.get('total_size_mb', 'N/A')} MB)")
+
+    # Projects info
+    projects = ctx.task_queue.get_projects()
+    if projects:
+        print(f"\n📦 Projects")
+        for proj in projects:
+            proj_id = proj['project_id']
+            proj_name = proj['project_name']
+            total = proj['total_tasks']
+            pending = proj['pending']
+            in_progress = proj['in_progress']
+
+            status_parts = []
+            if pending > 0:
+                status_parts.append(f"{pending} pending")
+            if in_progress > 0:
+                status_parts.append(f"{in_progress} in_progress")
+            status = ", ".join(status_parts) or "idle"
+
+            print(f"  {proj_id:<20} {proj_name:<20} {total:>6} tasks ({status})")
+
+    print()
     return 0
 
 
-def command_priority(ctx: CLIContext, task_id: int, priority: str) -> int:
-    """Update task priority."""
+def command_cancel(ctx: CLIContext, identifier: str | int) -> int:
+    """Cancel a pending task or move a project to trash.
 
-    wanted = TaskPriority.SERIOUS if priority == "serious" else TaskPriority.RANDOM
-    task = ctx.task_queue.update_priority(task_id, wanted)
-    if not task:
-        print(f"Task #{task_id} not found", file=sys.stderr)
-        return 1
+    If identifier is a task ID (integer), cancels that task and moves it to trash.
+    If identifier is a project name/ID (string), moves the project and all its tasks to trash.
+    Nothing is permanently deleted - everything goes to workspace/trash/.
+    """
 
-    print(f"Task #{task_id} priority set to {wanted.value}")
-    return 0
+    # Try to parse as integer (task ID)
+    if isinstance(identifier, int):
+        task_id = identifier
+        task = ctx.task_queue.cancel_task(task_id)
+        if not task:
+            print(f"Task #{task_id} not found or already running", file=sys.stderr)
+            return 1
+        print(f"Task #{task_id} moved to trash")
+        return 0
 
+    # Try to interpret as project ID
+    identifier_str = str(identifier)
+    try:
+        # Check if it's an integer string
+        task_id = int(identifier_str)
+        task = ctx.task_queue.cancel_task(task_id)
+        if not task:
+            print(f"Task #{task_id} not found or already running", file=sys.stderr)
+            return 1
+        print(f"Task #{task_id} moved to trash")
+        return 0
+    except ValueError:
+        # It's a project identifier, handle project soft deletion
+        project_id = _slugify_project(identifier_str)
+        project = ctx.task_queue.get_project_by_id(project_id)
 
-def command_cancel(ctx: CLIContext, task_id: int) -> int:
-    """Cancel a pending task."""
+        if not project:
+            print(f"Project not found: {identifier_str} (slug: {project_id})", file=sys.stderr)
+            return 1
 
-    task = ctx.task_queue.cancel_task(task_id)
-    if not task:
-        print(f"Task #{task_id} not found or already running", file=sys.stderr)
-        return 1
+        # Confirm move to trash
+        print(f"About to move project '{project['project_name']}' ({project_id}) to trash")
+        print(f"This will move {project['total_tasks']} task(s) to trash")
+        print(f"Workspace will be moved to: workspace/trash/project_{project_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}/")
 
-    print(f"Task #{task_id} cancelled")
-    return 0
+        response = input("Continue? (y/N): ").strip().lower()
+        if response != 'y':
+            print("Cancelled")
+            return 0
+
+        # Soft delete tasks from database
+        count = ctx.task_queue.delete_project(project_id)
+        print(f"Moved {count} task(s) to trash in database")
+
+        # Move workspace directory to trash
+        workspace_path = Path("workspace") / f"project_{project_id}"
+        if workspace_path.exists():
+            trash_dir = Path("workspace") / "trash"
+            trash_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            trash_path = trash_dir / f"project_{project_id}_{timestamp}"
+            workspace_path.rename(trash_path)
+            print(f"Moved workspace to trash: {trash_path}")
+        else:
+            print(f"Workspace directory not found: {workspace_path} (no workspace to move)")
+
+        return 0
 
 
 def _load_metrics(logs_dir: Path) -> list[dict]:
@@ -194,89 +285,6 @@ def _load_metrics(logs_dir: Path) -> list[dict]:
     return entries
 
 
-def command_credits(ctx: CLIContext, window_hours: int) -> int:
-    """Show credit usage based on recent metrics."""
-
-    entries = _load_metrics(ctx.logs_dir)
-    cutoff = datetime.utcnow() - timedelta(hours=window_hours)
-
-    recent = []
-    for entry in entries:
-        timestamp = entry.get("timestamp")
-        if not timestamp:
-            continue
-        try:
-            ts = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).replace(tzinfo=None)
-        except ValueError:
-            continue
-        if ts >= cutoff:
-            recent.append(entry)
-
-    status = ctx.task_queue.get_queue_status()
-    print("Credit window summary (last %d hours):" % window_hours)
-    print(f"  Tasks executed: {len(recent)}")
-    successes = sum(1 for e in recent if e.get("success"))
-    print(f"  Successful    : {successes}")
-    print(f"  Failed        : {len(recent) - successes}")
-    print("\nQueue snapshot:")
-    print(f"  Pending       : {status['pending']}")
-    print(f"  In Progress   : {status['in_progress']}")
-    print(f"  Completed     : {status['completed']}")
-    print(f"  Failed        : {status['failed']}")
-    return 0
-
-
-def command_health(ctx: CLIContext) -> int:
-    """Run health checks."""
-
-    report = ctx.monitor.check_health()
-    print(f"Status    : {report['status'].upper()}")
-    print(f"Uptime    : {report['uptime_human']}")
-    system = report.get("system", {})
-    print(f"CPU       : {system.get('cpu_percent', 'N/A')}%")
-    print(f"Memory    : {system.get('memory_percent', 'N/A')}%")
-    db = report.get("database", {})
-    if db:
-        print("Database :")
-        print(f"  Path    : {ctx.db_path}")
-        print(f"  Size    : {db.get('size_mb', 'N/A')} MB")
-        print(f"  Modified: {db.get('modified_ago_seconds', 'N/A')}s ago")
-    storage = report.get("storage", {})
-    if storage:
-        print("Results  :")
-        print(f"  Path    : {ctx.results_path}")
-        print(f"  Files   : {storage.get('count', 'N/A')}")
-        print(f"  Size    : {storage.get('total_size_mb', 'N/A')} MB")
-    return 0
-
-
-def command_metrics(ctx: CLIContext) -> int:
-    """Print aggregated metrics from history."""
-
-    entries = _load_metrics(ctx.logs_dir)
-    if not entries:
-        print("No metrics available (logs/metrics.jsonl missing)")
-        return 0
-
-    total = len(entries)
-    successes = sum(1 for e in entries if e.get("success"))
-    failures = total - successes
-    avg_duration = 0.0
-    durations = [e.get("duration_seconds", 0) for e in entries if isinstance(e.get("duration_seconds"), (int, float))]
-    if durations:
-        avg_duration = sum(durations) / len(durations)
-
-    first_ts = entries[0].get("timestamp")
-    last_ts = entries[-1].get("timestamp")
-
-    print("Metrics history:")
-    print(f"  Entries     : {total}")
-    print(f"  Successful  : {successes}")
-    print(f"  Failed      : {failures}")
-    print(f"  Avg Duration: {avg_duration:.1f}s")
-    if first_ts and last_ts:
-        print(f"  Range       : {first_ts} – {last_ts}")
-    return 0
 
 
 def _slugify_project(identifier: str) -> str:
@@ -284,116 +292,196 @@ def _slugify_project(identifier: str) -> str:
     return re.sub(r'[^a-z0-9-]', '-', identifier.lower())
 
 
-def command_ls(ctx: CLIContext) -> int:
-    """List all projects with task counts and status."""
+def command_trash(ctx: CLIContext, subcommand: Optional[str] = None, identifier: Optional[str] = None) -> int:
+    """Manage trash (list, restore, empty)."""
 
-    projects = ctx.task_queue.get_projects()
-    if not projects:
-        print("No projects found")
+    if not subcommand:
+        subcommand = "list"
+
+    if subcommand == "list":
+        trash_dir = Path("workspace") / "trash"
+        if not trash_dir.exists():
+            print("🗑️  Trash is empty")
+            return 0
+
+        items = list(trash_dir.iterdir())
+        if not items:
+            print("🗑️  Trash is empty")
+            return 0
+
+        print("🗑️  Trash Contents:")
+        for item in sorted(items):
+            if item.is_dir():
+                size_mb = sum(f.stat().st_size for f in item.rglob("*") if f.is_file()) / (1024 * 1024)
+                print(f"  📁 {item.name} ({size_mb:.1f} MB)")
         return 0
 
-    print("Projects:")
-    print(f"{'ID':<20} {'Name':<20} {'Tasks':>6} {'Status':<20}")
-    print("-" * 70)
+    elif subcommand == "restore":
+        if not identifier:
+            print("Usage: sleepless trash restore <project_id_or_name>", file=sys.stderr)
+            return 1
 
-    for proj in projects:
-        proj_id = proj['project_id']
-        proj_name = proj['project_name']
-        total = proj['total_tasks']
-        pending = proj['pending']
-        in_progress = proj['in_progress']
+        trash_dir = Path("workspace") / "trash"
+        if not trash_dir.exists():
+            print("🗑️  Trash is empty", file=sys.stderr)
+            return 1
 
-        status_parts = []
-        if pending > 0:
-            status_parts.append(f"{pending} pending")
-        if in_progress > 0:
-            status_parts.append(f"{in_progress} in_progress")
-        status = ", ".join(status_parts) or "idle"
+        # Find matching item in trash
+        search_term = identifier.lower().replace(" ", "-")
+        matching_items = [item for item in trash_dir.iterdir() if search_term in item.name.lower()]
 
-        print(f"{proj_id:<20} {proj_name:<20} {total:>6} {status:<20}")
+        if not matching_items:
+            print(f"Project not found in trash: {identifier}", file=sys.stderr)
+            return 1
 
-    return 0
+        if len(matching_items) > 1:
+            print(f"Multiple matches found for '{identifier}'. Be more specific:", file=sys.stderr)
+            for item in matching_items:
+                print(f"  - {item.name}", file=sys.stderr)
+            return 1
 
+        trash_item = matching_items[0]
 
-def command_cat(ctx: CLIContext, identifier: str) -> int:
-    """Show detailed project information."""
+        # Extract project_id from trash item name (e.g., "project_myapp_20231015_120000")
+        parts = trash_item.name.split("_")
+        if parts[0] != "project":
+            print(f"Invalid trash item format: {trash_item.name}", file=sys.stderr)
+            return 1
 
-    project_id = _slugify_project(identifier)
-    project = ctx.task_queue.get_project_by_id(project_id)
+        # Reconstruct project_id (everything except the last timestamp)
+        project_id = "_".join(parts[1:-2])  # Remove "project" prefix and timestamp parts
 
-    if not project:
-        print(f"Project not found: {identifier} (slug: {project_id})", file=sys.stderr)
-        return 1
-
-    print(f"Project: {project['project_name']} ({project['project_id']})")
-    print(f"Workspace: workspace/project_{project['project_id']}/")
-    print(f"Tasks: {project['total_tasks']} total")
-    print(f"  - Pending    : {project['pending']}")
-    print(f"  - In Progress: {project['in_progress']}")
-    print(f"  - Completed  : {project['completed']}")
-    print(f"  - Failed     : {project['failed']}")
-    print(f"Created: {project['created_at']}")
-
-    if project['tasks']:
-        print("\nRecent tasks:")
-        for task in project['tasks']:
-            status_icon = {
-                'completed': '✓',
-                'in_progress': '→',
-                'pending': '○',
-                'failed': '✗',
-                'cancelled': '◌',
-            }.get(task['status'], '?')
-            print(f"  {status_icon} #{task['id']} [{task['status']}] {task['description']}")
-
-    return 0
-
-
-def command_rm(ctx: CLIContext, identifier: str, keep_workspace: bool = False) -> int:
-    """Delete a project and optionally its workspace."""
-
-    project_id = _slugify_project(identifier)
-    project = ctx.task_queue.get_project_by_id(project_id)
-
-    if not project:
-        print(f"Project not found: {identifier} (slug: {project_id})", file=sys.stderr)
-        return 1
-
-    # Confirm deletion
-    print(f"About to delete project '{project['project_name']}' ({project_id})")
-    print(f"This will delete {project['total_tasks']} task(s)")
-
-    if not keep_workspace:
-        print(f"Workspace will be deleted: workspace/project_{project_id}/")
-    else:
-        print(f"Workspace will be kept: workspace/project_{project_id}/")
-
-    response = input("Continue? (y/N): ").strip().lower()
-    if response != 'y':
-        print("Cancelled")
-        return 0
-
-    # Delete tasks from database
-    count = ctx.task_queue.delete_project(project_id)
-    print(f"Deleted {count} task(s) from database")
-
-    # Optionally delete workspace directory
-    if not keep_workspace:
+        # Restore workspace
         workspace_path = Path("workspace") / f"project_{project_id}"
         if workspace_path.exists():
+            print(f"Workspace already exists at {workspace_path}", file=sys.stderr)
+            response = input("Overwrite? (y/N): ").strip().lower()
+            if response != 'y':
+                print("Cancelled")
+                return 0
             shutil.rmtree(workspace_path)
-            print(f"Deleted workspace directory: {workspace_path}")
-        else:
-            print(f"Workspace directory not found: {workspace_path}")
 
-    return 0
+        trash_item.rename(workspace_path)
+        print(f"✅ Restored project '{project_id}' from trash")
+
+        # Note: Tasks remain in CANCELLED status - user would need to manually update them
+        print("⚠️  Note: Tasks remain in CANCELLED status. Update them manually if needed.")
+        return 0
+
+    elif subcommand == "empty":
+        trash_dir = Path("workspace") / "trash"
+        if not trash_dir.exists() or not list(trash_dir.iterdir()):
+            print("🗑️  Trash is already empty")
+            return 0
+
+        print("About to permanently delete all items in trash")
+        response = input("Continue? (y/N): ").strip().lower()
+        if response != 'y':
+            print("Cancelled")
+            return 0
+
+        count = 0
+        for item in trash_dir.iterdir():
+            if item.is_dir():
+                shutil.rmtree(item)
+                count += 1
+
+        print(f"✅ Deleted {count} item(s) from trash")
+        return 0
+
+    else:
+        print(f"Unknown trash subcommand: {subcommand}", file=sys.stderr)
+        print("Usage: sleepless trash list|restore|empty [identifier]", file=sys.stderr)
+        return 1
+
+
+def command_report(ctx: CLIContext, identifier: Optional[str] = None, list_reports: bool = False) -> int:
+    """Unified report command - shows task details, daily reports, or project reports.
+
+    Usage:
+        sleepless report              # Today's daily report
+        sleepless report 123          # Task #123 details
+        sleepless report 2025-10-22   # Specific date's report
+        sleepless report project-id   # Project report
+        sleepless report --list       # List all reports
+    """
+
+    if list_reports:
+        # List all reports
+        daily_reports = ctx.report_generator.list_daily_reports()
+        project_reports = ctx.report_generator.list_project_reports()
+
+        if daily_reports:
+            print("📅 Daily Reports:")
+            for report_date in daily_reports:
+                print(f"  • {report_date}")
+        else:
+            print("📅 No daily reports available")
+
+        if project_reports:
+            print("\n📦 Project Reports:")
+            for project_id in project_reports:
+                print(f"  • {project_id}")
+        else:
+            if daily_reports:
+                print("\n📦 No project reports available")
+            else:
+                print("📦 No project reports available")
+
+        return 0
+
+    if not identifier:
+        # Default: today's daily report
+        date = datetime.utcnow().strftime("%Y-%m-%d")
+        report = ctx.report_generator.get_daily_report(date)
+        print(report)
+        return 0
+
+    # Auto-detect: is it a task ID (integer), date, or project ID?
+    # First try to parse as integer (task ID)
+    try:
+        task_id = int(identifier)
+        # It's a task ID, show task details
+        task = ctx.task_queue.get_task(task_id)
+        if not task:
+            print(f"Task #{task_id} not found", file=sys.stderr)
+            return 1
+
+        print(f"Task #{task.id}")
+        print(f"  Status  : {task.status.value}")
+        print(f"  Priority: {task.priority.value}")
+        print(f"  Created : {task.created_at}")
+        if task.error_message:
+            print(f"  Error   : {task.error_message}")
+        if task.context:
+            print("  Context :")
+            try:
+                context = json.loads(task.context)
+                print(json.dumps(context, indent=2))
+            except json.JSONDecodeError:
+                print(f"    {task.context}")
+        return 0
+    except ValueError:
+        pass
+
+    # Try to parse as date (YYYY-MM-DD)
+    try:
+        datetime.strptime(identifier, "%Y-%m-%d")
+        # It's a date
+        report = ctx.report_generator.get_daily_report(identifier)
+        print(report)
+        return 0
+    except ValueError:
+        # Not a date, treat as project ID
+        report = ctx.report_generator.get_project_report(identifier)
+        print(report)
+        return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Construct the CLI argument parser."""
 
     parser = argparse.ArgumentParser(description="Sleepless Agent command line interface")
-    add_common_arguments(parser)
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -405,42 +493,20 @@ def build_parser() -> argparse.ArgumentParser:
     think_parser.add_argument("description", nargs=argparse.REMAINDER, help="Thought description")
     think_parser.add_argument("-p", "--project", help="Project name to associate with the thought")
 
-    subparsers.add_parser("status", help="Show queue status")
+    status_parser = subparsers.add_parser("status", help="Show comprehensive system status (health + metrics + queue)")
 
-    results_parser = subparsers.add_parser("results", help="Show task details")
-    results_parser.add_argument("task_id", type=int)
+    cancel_parser = subparsers.add_parser("cancel", help="Move a task or project to trash")
+    cancel_parser.add_argument("identifier", help="Task ID (integer) or project name/ID (string)")
 
-    priority_parser = subparsers.add_parser("priority", help="Update task priority")
-    priority_parser.add_argument("task_id", type=int)
-    priority_parser.add_argument("priority", choices=["random", "serious"])
+    # Report command - unified for daily/project reports
+    report_parser = subparsers.add_parser("report", help="Show task details, daily reports, or project reports (auto-detect)")
+    report_parser.add_argument("identifier", nargs="?", help="Task ID (integer), report date (YYYY-MM-DD), or project ID (default: today)")
+    report_parser.add_argument("--list", dest="list_reports", action="store_true", help="List all available reports")
 
-    cancel_parser = subparsers.add_parser("cancel", help="Cancel a pending task")
-    cancel_parser.add_argument("task_id", type=int)
-
-    credits_parser = subparsers.add_parser("credits", help="Show credit window summary")
-    credits_parser.add_argument(
-        "--hours",
-        type=int,
-        default=5,
-        help="Window size in hours to inspect (default: 5)",
-    )
-
-    subparsers.add_parser("health", help="Run health checks")
-    subparsers.add_parser("metrics", help="Show aggregated performance metrics")
-
-    # Project management commands
-    subparsers.add_parser("ls", help="List all projects")
-
-    cat_parser = subparsers.add_parser("cat", help="Show project details")
-    cat_parser.add_argument("project", help="Project ID or name")
-
-    rm_parser = subparsers.add_parser("rm", help="Delete a project")
-    rm_parser.add_argument("project", help="Project ID or name")
-    rm_parser.add_argument(
-        "--keep-workspace",
-        action="store_true",
-        help="Keep workspace directory when deleting project",
-    )
+    # Trash command - manage deleted items
+    trash_parser = subparsers.add_parser("trash", help="Manage trash (list, restore, empty)")
+    trash_parser.add_argument("subcommand", nargs="?", default="list", help="list (default) | restore | empty")
+    trash_parser.add_argument("identifier", nargs="?", help="Project ID or name (for restore)")
 
     return parser
 
@@ -468,32 +534,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.command == "status":
         return command_status(ctx)
 
-    if args.command == "results":
-        return command_results(ctx, args.task_id)
-
-    if args.command == "priority":
-        return command_priority(ctx, args.task_id, args.priority)
-
     if args.command == "cancel":
-        return command_cancel(ctx, args.task_id)
+        return command_cancel(ctx, args.identifier)
 
-    if args.command == "credits":
-        return command_credits(ctx, args.hours)
+    if args.command == "report":
+        return command_report(ctx, args.identifier, args.list_reports)
 
-    if args.command == "health":
-        return command_health(ctx)
-
-    if args.command == "metrics":
-        return command_metrics(ctx)
-
-    if args.command == "ls":
-        return command_ls(ctx)
-
-    if args.command == "cat":
-        return command_cat(ctx, args.project)
-
-    if args.command == "rm":
-        return command_rm(ctx, args.project, args.keep_workspace)
+    if args.command == "trash":
+        return command_trash(ctx, args.subcommand, args.identifier)
 
     parser.error(f"Unknown command: {args.command}")
     return 1

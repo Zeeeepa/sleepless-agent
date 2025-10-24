@@ -7,17 +7,10 @@
 |---------|---------|---------|
 | `/task` | Add serious task | `/task Add OAuth2 support` |
 | `/think` | Capture random thought | `/think Explore async ideas` |
-| `/status` | Queue status | `/status` |
-| `/results` | Get task output | `/results 42` |
-| `/priority` | Change priority | `/priority 15 serious` |
-| `/cancel` | Cancel task | `/cancel 5` |
-
-### 💳 Credits & Scheduling
-| Command | Purpose | Example |
-|---------|---------|---------|
-| `/credits` | Credit window status | `/credits` |
-| `/health` | System health | `/health` |
-| `/metrics` | Performance stats | `/metrics` |
+| `/status` | Show system status and queue | `/status` |
+| `/report` | View reports or task details | `/report 42` |
+| `/cancel` | Cancel task or project | `/cancel 5` or `/cancel my-app` |
+| `/trash` | Manage trash | `/trash restore my-app` |
 
 ### 🖥️ Command Line Interface
 
@@ -27,13 +20,10 @@ Run `python -m sleepless_agent.interfaces.cli` (or the `sleepless` script after 
 |---------|---------|---------|
 | `task <description>` | Queue a serious task | `task "Refactor auth flow"` |
 | `think <description>` | Record a random thought | `think "Experiment with async"` |
-| `status` | Show queue snapshot | `status` |
-| `results <id>` | Inspect a task | `results 12` |
-| `priority <id> random|serious` | Adjust priority | `priority 12 random` |
-| `cancel <id>` | Cancel pending task | `cancel 12` |
-| `credits [--hours N]` | Summarize recent executions | `credits --hours 2` |
-| `health` | Run health checks | `health` |
-| `metrics` | Aggregate metrics | `metrics` |
+| `status` | Show system health, queue, and performance metrics | `status` |
+| `report [identifier]` | Show task details, daily reports, or project summaries (`--list` to browse reports) | `report 12` |
+| `cancel <identifier>` | Move a task or project to trash | `cancel 12` or `cancel my-app` |
+| `trash [subcommand] [identifier]` | Manage trash (list, restore, empty) | `trash restore my-app` |
 
 ## Setup (5 minutes)
 
@@ -55,7 +45,7 @@ sleepless daemon
 1. api.slack.com/apps → Create New App
 2. Enable Socket Mode (Settings > Socket Mode)
 3. Add OAuth scopes: `chat:write`, `commands`, `app_mentions:read`
-4. Create slash commands: `/task`, `/think`, `/status`, `/results`, `/priority`, `/cancel`, `/credits`, `/health`, `/metrics`
+4. Create slash commands: `/task`, `/think`, `/status`, `/report`, `/cancel`, `/trash`
 5. Install app to workspace
 6. Copy tokens to .env
 
@@ -129,9 +119,9 @@ sqlite3 data/tasks.db "SELECT * FROM tasks WHERE status='completed';"
 tail logs/metrics.jsonl | jq .
 
 # Slack commands
-/health          # System status
-/metrics         # Performance stats
-/credits         # Credit window
+/status          # System status and performance stats
+/report --list   # Browse available reports
+/trash list      # Review trash contents
 ```
 
 ## Deployment
@@ -181,7 +171,7 @@ The agent tracks:
 - Database health
 - Uptime and operational statistics
 
-View with: `/metrics` or `tail logs/metrics.jsonl`
+View with: `sleepless status` or `tail logs/metrics.jsonl`
 
 ## Tools Available to Claude
 
@@ -207,7 +197,7 @@ When processing tasks, Claude can:
 ### Production Fix
 ```
 /task Fix authentication bug in login endpoint
-/results <id>    # Get the PR link
+/report <id>     # Get the PR link
 # Review and merge PR
 ```
 
@@ -215,7 +205,6 @@ When processing tasks, Claude can:
 ```
 /task Security audit of user service
 /task Performance analysis of payment module
-/credits         # Monitor window usage
 ```
 
 ## Environment Variables
@@ -240,9 +229,9 @@ DEBUG=false
 
 1. **Use random thoughts to fill idle time** - Maximizes API usage
 2. **Batch serious jobs** - Reduces context switching
-3. **Monitor credits** - Use `/credits` frequently
+3. **Monitor credits** - Watch scheduler logs for window resets
 4. **Review git history** - Check `random-ideas` branch regularly
-5. **Check metrics** - Use `/metrics` to track performance
+5. **Check metrics** - Run `sleepless status` to track performance
 
 ## Security Notes
 
@@ -259,7 +248,7 @@ DEBUG=false
 3. Run: `sleepless daemon`
 4. Test commands in Slack
 5. Deploy as service using Makefile
-6. Monitor with `sleepless health` and `sleepless metrics` (or `/health` and `/metrics` in Slack)
+6. Monitor with `sleepless status` and `sleepless report --list` (or `/status` and `/report --list` in Slack)
 
 ---
 

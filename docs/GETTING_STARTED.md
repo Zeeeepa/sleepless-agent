@@ -38,12 +38,9 @@ Add these commands:
 - `/task` → Request URL: (leave empty for Socket Mode)
 - `/think`
 - `/status`
-- `/results`
-- `/credits`
-- `/health`
-- `/metrics`
-- `/priority`
+- `/report`
 - `/cancel`
+- `/trash`
 
 **4. OAuth Scopes**
 Features > OAuth & Permissions > Scopes > Bot Token Scopes
@@ -105,9 +102,8 @@ INFO - Sleepless Agent starting...
 
 **Morning Check:**
 ```
-/status        # See overnight progress
-/health        # Check system status
-/metrics       # View performance
+/status        # See overnight progress and system health
+/report --list # Browse available reports
 ```
 
 **Throughout Day:**
@@ -119,8 +115,8 @@ INFO - Sleepless Agent starting...
 
 **Check Results:**
 ```
-/results 42    # Get task #42 output
-/credits       # See credit usage
+/report 42     # Get task #42 details
+/report        # Show today's daily report
 ```
 
 ### Command Line Interface
@@ -139,13 +135,10 @@ CLI commands mirror the slash commands:
 |---------|---------|
 | `task <description>` | Queue a serious task |
 | `think <description>` | Log a random thought |
-| `status` | Show queue snapshot |
-| `results <id>` | Inspect task status and errors |
-| `priority <id> random|serious` | Update priority |
-| `cancel <id>` | Cancel a pending task |
-| `credits [--hours N]` | Summarize recent executions |
-| `health` | Run system health checks |
-| `metrics` | View aggregated performance metrics |
+| `status` | Show system health, queue, and performance metrics |
+| `report [identifier]` | Show task details, daily reports, or project summaries (`--list` to browse reports) |
+| `cancel <identifier>` | Move a task or project to trash |
+| `trash [subcommand] [identifier]` | Manage trash (list, restore, empty) |
 
 Use flags to target alternate storage locations when scripting:
 
@@ -158,7 +151,7 @@ sleepless --db-path ./data/tasks.db --results-path ./data/results status
 ```
 ┌─────────────────────────────────────────┐
 │         Slack Interface                 │
-│  /task /status /results /priority ...   │
+│  /task /status /report /trash ...       │
 └────────────────────┬────────────────────┘
                      │
         ┌────────────▼────────────┐
@@ -266,7 +259,7 @@ tail -100 logs/metrics.jsonl | jq .
 
 ### Check Health
 ```bash
-/health
+sleepless status
 ```
 
 ## Common Tasks
@@ -277,22 +270,14 @@ tail -100 logs/metrics.jsonl | jq .
 /think Some interesting idea 2
 /think Some interesting idea 3
 /status              # Monitor progress
-/credits             # Check credit usage
 ```
 
 ### Submit Serious Job with Context
 ```
 /task Add comprehensive error handling to API service
 # Agent reads codebase, understands context, writes implementation
-/results 15          # Get task #15 output
+/report 15           # Get task #15 details
 # Review the PR that was created
-```
-
-### Change Task Priority
-```
-/status              # Find task ID
-/priority 7 serious  # Promote to serious
-/priority 8 random   # Demote to random
 ```
 
 ## Advanced Features
@@ -379,11 +364,6 @@ gh auth login
 ### Out of credits
 
 **Wait for window to refresh** (5 hours from first task)
-
-Check current window:
-```
-/credits    # Shows time remaining
-```
 
 ## Next Steps
 

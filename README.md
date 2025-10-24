@@ -89,12 +89,9 @@ Settings > Slash Commands > Create New Command:
 - `/task` - Add serious task
 - `/think` - Capture random thought
 - `/status` - Check queue status
-- `/results` - Get task results
-- `/credits` - Check credit window
-- `/health` - System health
-- `/metrics` - Performance metrics
-- `/priority` - Change task priority
-- `/cancel` - Cancel pending task
+- `/cancel` - Cancel task or project
+- `/report` - Show reports or task details
+- `/trash` - Manage trash (list, restore, empty)
 
 **OAuth Scopes**
 Features > OAuth & Permissions > Bot Token Scopes:
@@ -137,24 +134,30 @@ INFO - Sleepless Agent starting...
 
 ## Slack Commands
 
+All Slack commands align with the CLI commands for consistency:
+
 ### 📋 Task Management
 
 | Command | Purpose | Example |
 |---------|---------|---------|
 | `/task` | Add serious task | `/task Add OAuth2 support` |
+| `/task` | With project | `/task Add OAuth2 support --project=backend` |
 | `/think` | Capture random thought | `/think Explore async ideas` |
-| `/status` | Queue status | `/status` |
-| `/results` | Get task output | `/results 42` |
-| `/priority` | Change priority | `/priority 15 serious` |
-| `/cancel` | Cancel task | `/cancel 5` |
+| `/status` | Show system status | `/status` |
+| `/cancel` | Cancel task or project | `/cancel 5` or `/cancel my-app` |
 
-### 💳 Monitoring
+### 📊 Reporting & Trash
 
-| Command | Purpose |
-|---------|---------|
-| `/credits` | Credit window status (5-hour windows) |
-| `/health` | System health (CPU, memory, disk) |
-| `/metrics` | Performance stats (success rate, duration) |
+| Command | Purpose | Example |
+|---------|---------|---------|
+| `/report` | Today's report | `/report` |
+| `/report` | Task details | `/report 42` |
+| `/report` | Date report | `/report 2025-10-22` |
+| `/report` | Project report | `/report my-app` |
+| `/report` | List all reports | `/report --list` |
+| `/trash` | List trash | `/trash list` |
+| `/trash` | Restore project | `/trash restore my-app` |
+| `/trash` | Empty trash | `/trash empty` |
 
 ## Command Line Interface
 
@@ -172,22 +175,10 @@ The CLI mirrors the Slack slash commands:
 |---------|---------|---------|
 | `task <description>` | Queue a serious task | `task "Build onboarding flow"` |
 | `think <description>` | Capture a random thought | `think "Explore async patterns"` |
-| `status` | Show queue snapshot | `status` |
-| `results <id>` | Inspect a task | `results 7` |
-| `priority <id> random|serious` | Change priority | `priority 7 random` |
-| `cancel <id>` | Cancel a pending task | `cancel 9` |
-| `credits [--hours N]` | Summarize recent usage | `credits --hours 2` |
-| `health` | Run health checks | `health` |
-| `metrics` | Aggregate performance metrics | `metrics` |
-| `ls` | List all projects | `ls` |
-| `cat <project>` | Show project details | `cat my-app` or `cat "My App"` |
-| `rm <project> [--keep-workspace]` | Delete a project | `rm my-app` or `rm my-app --keep-workspace` |
-
-**Project Management Notes:**
-- `cat` and `rm` accept both project IDs (slugified, e.g., `my-app`) and human-readable names (e.g., `"My App"`)
-- Project IDs are auto-slugified: `My App` → `my-app` (lowercase, spaces to hyphens)
-- `rm` requires confirmation before deletion
-- Use `--keep-workspace` flag to preserve project files on disk when deleting
+| `status` | Show system health, queue, and performance metrics | `status` |
+| `report [identifier]` | Show task details, daily reports, or project summaries (`--list` for all reports) | `report 7` |
+| `cancel <identifier>` | Move a task or project to trash | `cancel 9` or `cancel my-app` |
+| `trash [subcommand] [identifier]` | Manage trash (list, restore, empty) | `trash restore my-app` |
 
 Override storage locations when needed:
 
@@ -347,9 +338,8 @@ tail -100 logs/metrics.jsonl | jq .
 
 ### Slack Commands
 ```
-/health    # System status
-/metrics   # Performance stats
-/credits   # Credit window info
+/status    # System status and performance stats
+/report --list  # Available reports
 ```
 
 ## Deployment
@@ -379,7 +369,7 @@ launchctl list | grep sleepless
 ### Production Fix
 ```
 /task Fix authentication bug in login endpoint
-/results <id>    # Get the PR link
+/report <id>     # Get the PR link
 # Review and merge PR
 ```
 
@@ -387,7 +377,6 @@ launchctl list | grep sleepless
 ```
 /task Security audit of user service
 /task Performance analysis of payment module
-/credits         # Monitor window usage
 ```
 
 ## Troubleshooting
@@ -397,16 +386,16 @@ launchctl list | grep sleepless
 | Bot not responding | Check `.env` tokens, verify Socket Mode enabled, check logs: `tail -f logs/agent.log` |
 | Tasks not executing | Verify Claude Code CLI installed: `npm list -g @anthropic-ai/claude-code`, check workspace permissions |
 | Git commits fail | Install `gh` CLI and authenticate: `gh auth login` |
-| Out of credits | Wait for 5-hour window refresh. Check with `/credits` |
+| Out of credits | Wait for 5-hour window refresh. Review scheduler logs: `tail -f logs/agent.log | grep credit` |
 | Database locked | Close other connections, try: `rm data/tasks.db && python -m sleepless_agent.daemon` |
 
 ## Performance Tips
 
 1. **Use random thoughts to fill idle time** - Maximizes usage
 2. **Batch serious jobs** - Reduces context switching
-3. **Monitor credits** - Use `/credits` frequently
+3. **Monitor credits** - Watch scheduler logs for window resets
 4. **Review git history** - Check `random-ideas` branch regularly
-5. **Check metrics** - Use `/metrics` to track performance
+5. **Check metrics** - Run `sleepless status` to track performance
 
 ## Security Notes
 

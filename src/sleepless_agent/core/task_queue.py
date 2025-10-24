@@ -136,14 +136,15 @@ class TaskQueue:
             session.close()
 
     def cancel_task(self, task_id: int) -> Optional[Task]:
-        """Cancel pending task"""
+        """Cancel pending task (soft delete)"""
         session = self.SessionLocal()
         try:
             task = session.query(Task).filter(Task.id == task_id).first()
             if task and task.status == TaskStatus.PENDING:
                 task.status = TaskStatus.CANCELLED
+                task.deleted_at = datetime.utcnow()
                 session.commit()
-                logger.info(f"Task {task_id} cancelled")
+                logger.info(f"Task {task_id} cancelled and moved to trash")
             return task
         finally:
             session.close()
@@ -268,12 +269,18 @@ class TaskQueue:
             session.close()
 
     def delete_project(self, project_id: str) -> int:
-        """Delete all tasks in a project. Returns count of deleted tasks."""
+        """Soft delete all tasks in a project (mark as CANCELLED). Returns count of affected tasks."""
         session = self.SessionLocal()
         try:
-            count = session.query(Task).filter(Task.project_id == project_id).delete()
+            tasks = session.query(Task).filter(Task.project_id == project_id).all()
+            count = 0
+            for task in tasks:
+                if task.status == TaskStatus.PENDING:
+                    task.status = TaskStatus.CANCELLED
+                    task.deleted_at = datetime.utcnow()
+                    count += 1
             session.commit()
-            logger.info(f"Deleted project {project_id}: {count} tasks removed")
+            logger.info(f"Soft deleted project {project_id}: {count} tasks moved to trash")
             return count
         except Exception as e:
             session.rollback()
