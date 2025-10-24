@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -24,6 +25,8 @@ class WorkspaceSetup:
         self.agent_config = agent_config
         self.state_path = Path.home() / ".sleepless_agent_setup.json"
         self.default_workspace = agent_config.workspace_root.expanduser().resolve()
+        self.repo_root = Path.cwd()
+        self.default_remote_url = self._detect_default_remote_url()
 
     def run(self) -> WorkspaceConfigResult:
         """Load previous setup or prompt the user, then apply to config."""
@@ -70,12 +73,12 @@ class WorkspaceSetup:
             Path(workspace_input).expanduser().resolve() if workspace_input else self.default_workspace
         )
 
-        use_remote_input = input("Use remote GitHub repo to track? [y/N]: ").strip().lower()
-        use_remote_repo = use_remote_input in {"y", "yes"}
+        use_remote_input = input("Use remote GitHub repo to track? [Y/n]: ").strip().lower()
+        use_remote_repo = use_remote_input not in {"n", "no"}
 
         remote_repo_url = None
         if use_remote_repo:
-            default_remote = "git@github.com:username/sleepless-agent.git"
+            default_remote = self.default_remote_url or self._fallback_remote_url()
             remote_repo_input = input(f"Remote repository URL [{default_remote}]: ").strip()
             remote_repo_url = remote_repo_input or default_remote
 
@@ -92,3 +95,52 @@ class WorkspaceSetup:
         self.agent_config.shared_workspace = workspace_root / "shared"
         self.agent_config.db_path = data_dir / "tasks.db"
         self.agent_config.results_path = data_dir / "results"
+
+    # ------------------------------------------------------------------
+    # Git helpers
+    # ------------------------------------------------------------------
+    def _detect_default_remote_url(self) -> Optional[str]:
+        """Attempt to infer a sane default remote URL."""
+        origin_url = self._run_git_command(["git", "remote", "get-url", "origin"])
+        if origin_url:
+            return origin_url.strip()
+
+        username = self._get_git_identity()
+        if not username:
+            return None
+
+        repo_name = self.repo_root.name or "sleepless-agent"
+        user_slug = username.replace(" ", "-")
+        return f"git@github.com:{user_slug}/{repo_name}.git"
+
+    def _get_git_identity(self) -> Optional[str]:
+        """Get git user identity, preferring user.name over user.email."""
+        name = self._run_git_command(["git", "config", "--get", "user.name"])
+        if name:
+            return name.strip()
+
+        email = self._run_git_command(["git", "config", "--get", "user.email"])
+        if email:
+            return email.strip().split("@")[0]
+
+        return None
+
+    def _run_git_command(self, cmd: list[str]) -> Optional[str]:
+        """Execute git command in repository root and return stdout."""
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=self.repo_root,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return result.stdout.strip()
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.debug(f"Failed to run {' '.join(cmd)}: {exc}")
+        return None
+
+    def _fallback_remote_url(self) -> str:
+        repo_name = self.repo_root.name or "sleepless-agent"
+        return f"git@github.com:username/{repo_name}.git"

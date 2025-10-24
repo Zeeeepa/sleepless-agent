@@ -7,7 +7,7 @@
 |---------|---------|---------|
 | `/task` | Add serious task | `/task Add OAuth2 support` |
 | `/think` | Capture random thought | `/think Explore async ideas` |
-| `/status` | Show system status and queue | `/status` |
+| `/check` | Show system status and queue | `/check` |
 | `/report` | View reports or task details | `/report 42` |
 | `/cancel` | Cancel task or project | `/cancel 5` or `/cancel my-app` |
 | `/trash` | Manage trash | `/trash restore my-app` |
@@ -45,7 +45,7 @@ sleepless daemon
 1. api.slack.com/apps → Create New App
 2. Enable Socket Mode (Settings > Socket Mode)
 3. Add OAuth scopes: `chat:write`, `commands`, `app_mentions:read`
-4. Create slash commands: `/task`, `/think`, `/status`, `/report`, `/cancel`, `/trash`
+4. Create slash commands: `/task`, `/think`, `/check`, `/report`, `/cancel`, `/trash`
 5. Install app to workspace
 6. Copy tokens to .env
 
@@ -119,7 +119,7 @@ sqlite3 workspace/data/tasks.db "SELECT * FROM tasks WHERE status='completed';"
 tail workspace/data/metrics.jsonl | jq .
 
 # Slack commands
-/status          # System status and performance stats
+/check           # System status and performance stats
 /report --list   # Browse available reports
 /trash list      # Review trash contents
 ```
@@ -191,7 +191,7 @@ When processing tasks, Claude can:
 /think Research new Rust async libraries
 /think Compare Python web frameworks
 /think Ideas for improving API performance
-/status
+/check
 ```
 
 ### Production Fix
@@ -248,7 +248,7 @@ DEBUG=false
 3. Run: `sleepless daemon`
 4. Test commands in Slack
 5. Deploy as service using Makefile
-6. Monitor with `sleepless status` and `sleepless report --list` (or `/status` and `/report --list` in Slack)
+6. Monitor with `sleepless status` and `sleepless report --list` (or `/check` and `/report --list` in Slack)
 
 ---
 

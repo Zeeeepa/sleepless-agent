@@ -88,7 +88,7 @@ Visit https://api.slack.com/apps and create a new app:
 Settings > Slash Commands > Create New Command:
 - `/task` - Add serious task
 - `/think` - Capture random thought
-- `/status` - Check queue status
+- `/check` - Check queue status
 - `/cancel` - Cancel task or project
 - `/report` - Show reports or task details
 - `/trash` - Manage trash (list, restore, empty)
@@ -143,7 +143,7 @@ All Slack commands align with the CLI commands for consistency:
 | `/task` | Add serious task | `/task Add OAuth2 support` |
 | `/task` | With project | `/task Add OAuth2 support --project=backend` |
 | `/think` | Capture random thought | `/think Explore async ideas` |
-| `/status` | Show system status | `/status` |
+| `/check` | Show system status | `/check` |
 | `/cancel` | Cancel task or project | `/cancel 5` or `/cancel my-app` |
 
 ### 📊 Reporting & Trash
@@ -343,7 +343,7 @@ tail -100 workspace/data/metrics.jsonl | jq .
 
 ### Slack Commands
 ```
-/status    # System status and performance stats
+/check    # System status and performance stats
 /report --list  # Available reports
 ```
 
@@ -368,7 +368,7 @@ launchctl list | grep sleepless
 /think Research new Rust async libraries
 /think Compare Python web frameworks
 /think Ideas for improving API performance
-/status
+/check
 ```
 
 ### Production Fix
