@@ -284,6 +284,21 @@ class TaskQueue:
         finally:
             session.close()
 
+    def get_failed_tasks(self, limit: int = 10) -> List[Task]:
+        """Get the most recent failed tasks."""
+        session = self.SessionLocal()
+        try:
+            tasks = (
+                session.query(Task)
+                .filter(Task.status == TaskStatus.FAILED)
+                .order_by(Task.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+            return tasks
+        finally:
+            session.close()
+
     def delete_project(self, project_id: str) -> int:
         """Soft delete all tasks in a project (mark as CANCELLED). Returns count of affected tasks."""
         session = self.SessionLocal()
