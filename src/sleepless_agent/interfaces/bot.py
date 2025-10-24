@@ -14,7 +14,7 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 from sleepless_agent.core.display import format_age_seconds, format_duration, relative_time, shorten
 from sleepless_agent.core.models import TaskPriority, TaskStatus
 from sleepless_agent.core.task_queue import TaskQueue
-from sleepless_agent.core.task_utils import parse_task_description, slugify_project
+from sleepless_agent.core.task_utils import prepare_task_creation
 from sleepless_agent.core.live_status import LiveStatusTracker
 from sleepless_agent.monitoring.report_generator import ReportGenerator
 
@@ -124,19 +124,25 @@ class SlackBot:
             self.send_response(response_url, "Usage: /task <description> [--project=<project_name>]")
             return
 
-        description, project_name, note = parse_task_description(args)
+        (
+            cleaned_description,
+            project_name,
+            project_id,
+            note,
+        ) = prepare_task_creation(args)
 
-        if not description.strip():
+        if not cleaned_description.strip():
             self.send_response(response_url, "Please provide a task description")
             return
 
         self._create_task(
-            description=description.strip(),
+            description=cleaned_description.strip(),
             priority=TaskPriority.SERIOUS,
             response_url=response_url,
             user_id=user_id,
             note=note,
             project_name=project_name,
+            project_id=project_id,
         )
 
     def handle_think_command(
@@ -165,11 +171,16 @@ class SlackBot:
             self.send_response(response_url, "Please provide a thought to capture")
             return
 
+        cleaned_description, project_name, project_id, helper_note = prepare_task_creation(description)
+
         self._create_task(
-            description=description,
+            description=cleaned_description,
             priority=TaskPriority.RANDOM,
             response_url=response_url,
             user_id=user_id,
+            note=helper_note,
+            project_name=project_name,
+            project_id=project_id,
         )
 
     def _create_task(
@@ -180,12 +191,10 @@ class SlackBot:
         user_id: str,
         note: Optional[str] = None,
         project_name: Optional[str] = None,
+        project_id: Optional[str] = None,
     ):
         """Create a task and send a Slack response"""
         try:
-            # Generate project_id from project_name (simple slug)
-            project_id = slugify_project(project_name) if project_name else None
-
             task = self.task_queue.add_task(
                 description=description,
                 priority=priority,

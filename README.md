@@ -68,7 +68,7 @@ git clone <repo>
 cd sleepless-agent
 python -m venv venv
 source venv/bin/activate  # or venv\Scripts\activate on Windows
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ### 2. Setup Slack App
@@ -238,32 +238,15 @@ sleepless-agent/
 │   ├── tasks/              # Task workspaces (task_1/, task_2/, etc.)
 │   ├── projects/           # Project workspaces
 │   └── trash/              # Soft-deleted projects
-├── config.yaml             # Configuration
 ├── .env                    # Secrets (not tracked)
-├── requirements.txt        # Python dependencies
+├── pyproject.toml          # Python package metadata & dependencies
 ├── README.md              # This file
 └── docs/                  # Additional documentation
 ```
 
 ## Configuration
 
-Edit `config.yaml` to customize:
-
-```yaml
-agent:
-  max_parallel_tasks: 3        # 1-10 concurrent tasks
-  task_timeout_seconds: 3600   # 1 hour per task
-
-claude_code:
-  binary_path: "claude"        # Path to claude binary
-  default_timeout: 3600        # Timeout in seconds
-  cleanup_random_workspaces: true
-
-scheduler:
-  serious_job_priority: 100
-  random_thought_priority: 10
-  max_retries: 3
-```
+Runtime settings come from environment variables loaded via `.env` (see `.env.example`). Update those values or export them in your shell to tune agent behavior.
 
 ## Environment Variables
 

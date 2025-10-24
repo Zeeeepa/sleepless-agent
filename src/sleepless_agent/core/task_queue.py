@@ -1,7 +1,7 @@
 """Task queue management"""
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 from loguru import logger
@@ -131,6 +131,8 @@ class TaskQueue:
             if task:
                 task.status = TaskStatus.FAILED
                 task.error_message = error_message
+                if not task.completed_at:
+                    task.completed_at = datetime.utcnow()
                 session.commit()
                 logger.error(f"Task {task_id} marked as failed: {error_message}")
             return task
@@ -219,6 +221,47 @@ class TaskQueue:
                 })
 
             return sorted(result, key=lambda x: x['project_id'])
+        finally:
+            session.close()
+
+    def timeout_expired_tasks(self, max_age_seconds: int) -> List[Task]:
+        """Mark in-progress tasks that exceed the timeout as failed and return them."""
+        if max_age_seconds <= 0:
+            return []
+
+        session = self.SessionLocal()
+        try:
+            cutoff = datetime.utcnow() - timedelta(seconds=max_age_seconds)
+            tasks = (
+                session.query(Task)
+                .filter(
+                    Task.status == TaskStatus.IN_PROGRESS,
+                    Task.started_at.isnot(None),
+                    Task.started_at < cutoff,
+                )
+                .all()
+            )
+
+            if not tasks:
+                return []
+
+            now = datetime.utcnow()
+            for task in tasks:
+                task.status = TaskStatus.FAILED
+                task.completed_at = now
+                task.error_message = (
+                    f"Timed out after exceeding {max_age_seconds // 60} minute limit."
+                )
+
+            session.commit()
+            logger.warning(
+                f"Timed out tasks: {[task.id for task in tasks]} (>{max_age_seconds}s)"
+            )
+            return tasks
+        except Exception as exc:
+            session.rollback()
+            logger.error(f"Failed to mark timed out tasks: {exc}")
+            raise
         finally:
             session.close()
 

@@ -53,8 +53,20 @@ class ProPlanUsageChecker:
 
             output = result.stdout + result.stderr
 
+            output = output.strip()
+
+            if not output:
+                logger.warning(
+                    "Claude usage command returned no output; falling back to cached or default usage data."
+                )
+                return self._fallback_usage()
+
             # Parse output
-            messages_used, messages_limit, reset_time = self._parse_usage_output(output)
+            try:
+                messages_used, messages_limit, reset_time = self._parse_usage_output(output)
+            except RuntimeError as parse_error:
+                logger.warning(f"Could not interpret usage output: {parse_error}")
+                return self._fallback_usage()
 
             # Cache result
             self.cached_usage = (messages_used, messages_limit, reset_time)
@@ -70,6 +82,8 @@ class ProPlanUsageChecker:
         except subprocess.TimeoutExpired:
             logger.error("Usage check timed out after 10 seconds")
             raise RuntimeError("Usage check timed out")
+        except RuntimeError:
+            raise
         except Exception as e:
             logger.error(f"Failed to get usage: {e}")
             raise
@@ -147,7 +161,10 @@ class ProPlanUsageChecker:
                     break
 
         if messages_used is None or messages_limit is None:
-            raise RuntimeError(f"Could not parse usage from: {output}")
+            displayed = output.replace("\n", " ").strip()
+            if len(displayed) > 120:
+                displayed = f"{displayed[:117]}..."
+            raise RuntimeError(f"Could not parse usage from '{displayed}'")
 
         # Parse reset time
         reset_time = self._parse_reset_time(output)
@@ -280,3 +297,20 @@ class ProPlanUsageChecker:
             logger.error(f"Error checking threshold: {e}")
             # Return False to not pause on error
             return False, None
+
+    def _fallback_usage(self) -> Tuple[int, int, datetime]:
+        """
+        Provide cached usage if available, otherwise return a conservative default.
+        """
+        if self.cached_usage and self.last_check_time:
+            logger.debug("Using cached usage data after failed usage command.")
+            return self.cached_usage
+
+        reset_time = datetime.utcnow() + timedelta(hours=5)
+        fallback = (0, 40, reset_time)
+        self.cached_usage = fallback
+        self.last_check_time = datetime.utcnow()
+        logger.info(
+            "Defaulting to 0/40 usage with 5-hour reset window due to missing usage data."
+        )
+        return fallback

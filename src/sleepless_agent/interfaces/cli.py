@@ -26,7 +26,7 @@ from sleepless_agent.core import TaskPriority, TaskQueue, init_db
 from sleepless_agent.core.models import TaskStatus
 from sleepless_agent.core.display import format_age_seconds, format_duration, relative_time, shorten
 from sleepless_agent.core.live_status import LiveStatusTracker
-from sleepless_agent.core.task_utils import parse_task_description, slugify_project
+from sleepless_agent.core.task_utils import prepare_task_creation
 from sleepless_agent.monitoring.monitor import HealthMonitor
 from sleepless_agent.monitoring.report_generator import ReportGenerator
 
@@ -77,23 +77,19 @@ def build_context(args: argparse.Namespace) -> CLIContext:
 def command_task(ctx: CLIContext, description: str, priority: TaskPriority, project_name: Optional[str] = None) -> int:
     """Create a task with the given priority."""
 
-    description = description.strip()
-    if not description:
+    if not description.strip():
         print("Description cannot be empty", file=sys.stderr)
         return 1
 
-    description, parsed_project, note = parse_task_description(description)
-
-    # Prefer argparse --project flag over parsed one
-    final_project_name = project_name or parsed_project
-
-    # Generate project_id from project_name (simple slug)
-    project_id = None
-    if final_project_name:
-        project_id = slugify_project(final_project_name)
+    (
+        cleaned_description,
+        final_project_name,
+        project_id,
+        note,
+    ) = prepare_task_creation(description, project_override=project_name)
 
     task = ctx.task_queue.add_task(
-        description=description,
+        description=cleaned_description,
         priority=priority,
         project_id=project_id,
         project_name=final_project_name,
@@ -105,7 +101,7 @@ def command_task(ctx: CLIContext, description: str, priority: TaskPriority, proj
     else:
         label = "Generated"
     project_info = f" [Project: {final_project_name}]" if final_project_name else ""
-    print(f"{label} task #{task.id} queued{project_info}:\n{description}")
+    print(f"{label} task #{task.id} queued{project_info}:\n{cleaned_description}")
     if note:
         print(note, file=sys.stderr)
     return 0
@@ -115,6 +111,22 @@ def command_check(ctx: CLIContext) -> int:
     """Render an enriched system snapshot."""
 
     console = Console()
+
+    config = get_config()
+    timeout_seconds = getattr(config.agent, "task_timeout_seconds", 0)
+    timed_out_tasks = []
+    if timeout_seconds and timeout_seconds > 0:
+        try:
+            timed_out_tasks = ctx.task_queue.timeout_expired_tasks(timeout_seconds)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.debug(f"Failed to enforce task timeout during check: {exc}")
+
+    if timed_out_tasks:
+        timeout_minutes = max(1, timeout_seconds // 60)
+        console.print(
+            f"[yellow]⏱️ Marked {len(timed_out_tasks)} task(s) as timed out "
+            f"after exceeding {timeout_minutes} minute limit.[/]"
+        )
 
     health = ctx.monitor.check_health()
     queue_status = ctx.task_queue.get_queue_status()
@@ -471,26 +483,25 @@ def command_check(ctx: CLIContext) -> int:
     layout["middle_section"]["queue"].update(queue_panel)
     layout["middle_section"]["metrics"].update(metrics_panel)
 
-    # Tasks section: Split into dynamic subsections
-    tasks_layout = layout["tasks_section"]
-    sections: list[tuple[str, Panel]] = [
-        ("live_section", live_panel),
-        ("running_section", running_panel),
-        ("pending_section", pending_panel),
-    ]
-    if errors_panel:
-        sections.append(("errors_section", errors_panel))
-    if project_panel:
-        sections.append(("projects_section", project_panel))
-    sections.append(("recent_section", recent_panel))
-
-    layouts = [Layout(name=name, ratio=1) for name, _ in sections]
-    tasks_layout.split_column(*layouts)
-    for name, panel in sections:
-        tasks_layout[name].update(panel)
-
+    # Print top sections using Layout (header, health, storage, queue, metrics)
     console.print()
     console.print(layout)
+
+    # Print tasks panels sequentially (auto-sized by Rich, no truncation)
+    console.print()
+    console.print(live_panel)
+    console.print()
+    console.print(running_panel)
+    console.print()
+    console.print(pending_panel)
+    if errors_panel:
+        console.print()
+        console.print(errors_panel)
+    if project_panel:
+        console.print()
+        console.print(project_panel)
+    console.print()
+    console.print(recent_panel)
 
     return 0
 

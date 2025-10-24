@@ -16,7 +16,7 @@ help:
 
 setup:
 	python -m venv venv
-	./venv/bin/pip install -r requirements.txt
+	./venv/bin/pip install -e .
 	cp .env.example .env
 	@echo "✓ Setup complete. Edit .env with your tokens"
 
@@ -87,5 +87,5 @@ status:
 
 backup:
 	@mkdir -p backups
-	@tar czf backups/sleepless-agent-$$(date +%Y%m%d-%H%M%S).tar.gz workspace/data/ config.yaml
+	@tar czf backups/sleepless-agent-$$(date +%Y%m%d-%H%M%S).tar.gz workspace/data/
 	@echo "✓ Backup created"

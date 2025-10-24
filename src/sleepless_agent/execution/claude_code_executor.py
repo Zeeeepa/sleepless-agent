@@ -1,10 +1,13 @@
 """Claude Code SDK executor for task processing"""
 
+import asyncio
 import re
 import subprocess
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Optional, Tuple, List, Dict
+import shutil
 
 from claude_agent_sdk import (
     query,
@@ -130,19 +133,26 @@ class ClaudeCodeExecutor:
         Returns:
             Template content string
         """
-        try:
-            from importlib.resources import files
-            template_dir = files(__package__).joinpath("../templates")
-            template_file = f"{template_type}_readme.md"
-            template_path = template_dir / template_file
-            return template_path.read_text()
-        except Exception as e:
-            logger.warning(f"Could not load {template_type} README template: {e}")
-            # Fallback simple template
-            if template_type == "task":
-                return f"# Task Workspace\n\nDescription: {{TASK_DESCRIPTION}}\n"
-            else:
-                return f"# Project Workspace\n\nProject: {{PROJECT_NAME}}\n"
+        # Templates were previously shipped as files; now we rely on lightweight defaults
+        if template_type == "project":
+            return (
+                "# Project Workspace\n\n"
+                "Project: {PROJECT_NAME}\n\n"
+                "## Overview\n"
+                "- Description: {TASK_DESCRIPTION}\n"
+                "- Created: {CREATED_AT}\n"
+            )
+
+        return (
+            "# Task Workspace\n\n"
+            "Task #{TASK_ID}: {TASK_TITLE}\n\n"
+            "## Summary\n"
+            "- Priority: {PRIORITY_LABEL}\n"
+            "- Project: {PROJECT_NAME}\n"
+            "- Created: {CREATED_AT}\n\n"
+            "## Description\n"
+            "{TASK_DESCRIPTION}\n"
+        )
 
     def _ensure_readme_exists(self, workspace: Path, task_id: int, task_description: str,
                              project_id: Optional[str] = None, project_name: Optional[str] = None) -> Path:
@@ -760,6 +770,7 @@ Please work through the plan systematically and update TodoWrite as you complete
             "worker_duration_ms": None,
             "worker_turns": None,
         }
+        tool_usage_counts: "OrderedDict[str, int]" = OrderedDict()
 
         try:
             files_before = self._get_workspace_files(workspace)
@@ -795,14 +806,16 @@ Please work through the plan systematically and update TodoWrite as you complete
                                     status="running",
                                 )
                         elif isinstance(block, ToolUseBlock):
-                            logger.info(f"Worker tool used: {block.name}")
+                            tool_name = block.name
+                            tool_usage_counts.setdefault(tool_name, 0)
+                            tool_usage_counts[tool_name] += 1
 
-                            if block.name in ["Write", "Edit"]:
+                            if tool_name in ["Write", "Edit"]:
                                 file_path = block.input.get("file_path", "")
                                 if file_path:
                                     files_modified.add(file_path)
 
-                            elif block.name == "Bash":
+                            elif tool_name == "Bash":
                                 command = block.input.get("command", "")
                                 if command:
                                     commands_executed.append(command)
@@ -839,6 +852,12 @@ Please work through the plan systematically and update TodoWrite as you complete
             files_after = self._get_workspace_files(workspace)
             new_files = files_after - files_before
             all_modified_files = files_modified.union(new_files)
+
+            if tool_usage_counts:
+                summary = ", ".join(
+                    f"{name} x{count}" for name, count in tool_usage_counts.items()
+                )
+                logger.info(f"Worker tools summary: {summary}")
 
             exit_code = 0 if success else 1
 
@@ -1378,6 +1397,16 @@ Output should include:
             )
             logger.error(f"Failed to parse Claude Code output: {e}")
             raise RuntimeError(f"Failed to parse Claude Code output: {e}")
+        except asyncio.CancelledError:
+            self._live_update(
+                task_id,
+                phase="error",
+                prompt=description,
+                answer="Execution cancelled (timeout or shutdown)",
+                status="error",
+            )
+            logger.warning(f"Task {task_id} execution cancelled")
+            raise
         except Exception as e:
             self._live_update(
                 task_id,
@@ -1507,6 +1536,18 @@ Please complete this task and provide a summary of what you did at the end.
 
         return files
 
+    def list_workspace_files(self, workspace: Path) -> set:
+        """Public helper to list workspace files (excludes caches and metadata)."""
+        return self._get_workspace_files(workspace)
+
+    def cleanup_workspace_caches(self, workspace: Path):
+        """Remove Python cache directories from workspace."""
+        try:
+            for cache_dir in workspace.rglob("__pycache__"):
+                shutil.rmtree(cache_dir, ignore_errors=True)
+        except Exception as exc:
+            logger.debug(f"Failed to clean __pycache__ in {workspace}: {exc}")
+
     def _find_task_workspace(self, task_id: int) -> Optional[Path]:
         """Find task workspace by ID (searches tasks/ directory)
 
@@ -1524,18 +1565,20 @@ Please complete this task and provide a summary of what you did at the end.
             logger.debug(f"Error searching for task workspace {task_id}: {e}")
         return None
 
-    def cleanup_workspace(self, task_id: int, force: bool = False):
+    def cleanup_workspace(self, task_id: int, force: bool = False) -> bool:
         """Clean up task workspace
 
         Args:
             task_id: Task ID
             force: Force cleanup even if files exist (default: False)
+        Returns:
+            True if workspace was removed, False otherwise.
         """
         workspace = self._find_task_workspace(task_id)
 
         if workspace is None or not workspace.exists():
             logger.debug(f"Workspace does not exist for task {task_id}")
-            return
+            return False
 
         try:
             # Check if workspace is empty or force cleanup
@@ -1544,10 +1587,12 @@ Please complete this task and provide a summary of what you did at the end.
                 import shutil
                 shutil.rmtree(workspace)
                 logger.info(f"Cleaned up workspace: {workspace}")
-            else:
-                logger.debug(f"Workspace not empty, skipping cleanup: {workspace}")
+                return True
+            logger.debug(f"Workspace not empty, skipping cleanup: {workspace}")
+            return False
         except Exception as e:
             logger.error(f"Failed to cleanup workspace {workspace}: {e}")
+            return False
 
     def get_workspace_path(self, task_id: int, project_id: Optional[str] = None) -> Optional[Path]:
         """Get path to task workspace

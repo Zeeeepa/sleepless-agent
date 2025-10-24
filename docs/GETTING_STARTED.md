@@ -15,7 +15,7 @@ Welcome! Here's how to get your 24/7 AI assistant up and running.
 ```bash
 python -m venv venv
 source venv/bin/activate  # or venv\Scripts\activate on Windows
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ### 3. Create Slack Bot
@@ -197,8 +197,6 @@ sleepless-agent/
 │   ├── daemon.py           # Main event loop
 │   ├── bot.py              # Slack interface
 │   ├── task_queue.py       # Task management
-│   ├── claude_executor.py  # Claude API wrapper
-│   ├── tools.py            # File/bash operations
 │   ├── scheduler.py        # Smart scheduling
 │   ├── git_manager.py      # Git automation
 │   ├── monitor.py          # Health & metrics
@@ -216,34 +214,14 @@ sleepless-agent/
 │   ├── tasks/              # Task workspaces
 │   ├── projects/           # Project workspaces
 │   └── trash/              # Soft-deleted projects
-├── config.yaml             # Configuration
 ├── .env                    # Secrets
-├── requirements.txt        # Python deps
+├── pyproject.toml          # Python package metadata & deps
 └── README.md
 ```
 
 ## Configuration
 
-Edit `config.yaml` to customize:
-
-```yaml
-agent:
-  max_parallel_tasks: 3        # 1-10 concurrent tasks
-  task_timeout_seconds: 3600   # How long per task
-
-claude:
-  model: claude-opus-4-1-20250805  # Model choice
-  max_tokens: 4096             # Response length
-
-credits:
-  track_windows: true
-  window_size_hours: 5         # Assumes 5h refresh
-  max_tasks_per_window: 10
-
-scheduler:
-  serious_job_priority: 100
-  random_thought_priority: 10
-```
+All runtime settings come from environment variables loaded via `.env`. Copy `.env.example` to `.env`, fill in your credentials, and adjust any optional overrides there.
 
 ## Monitoring
 
@@ -392,7 +370,7 @@ gh auth login
    ```
 
 3. **Customize Task Types**
-   - Edit `TASK_PROMPTS` in `claude_executor.py`
+   - Edit planner/worker prompts in `claude_code_executor.py`
    - Add domain-specific instructions
    - Fine-tune for your workflow
 
@@ -405,7 +383,6 @@ gh auth login
 
 **Issues?**
 - Check logs: `tail -f workspace/data/agent.log`
-- Review config: `cat config.yaml`
 - Test Claude API: `python -c "from anthropic import Anthropic; print('OK')"`
 - Verify Slack: Manually post in workspace
 

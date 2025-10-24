@@ -30,7 +30,7 @@ Run `python -m sleepless_agent.interfaces.cli` (or the `sleepless` script after 
 ```bash
 # 1. Install
 python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
 
 # 2. Configure
 cp .env.example .env
@@ -79,9 +79,7 @@ src/
     ├── daemon.py            Main event loop
     ├── bot.py               Slack interface
     ├── task_queue.py        Task management
-    ├── claude_executor.py   Claude API + tools
     ├── claude_code_executor.py  Claude CLI wrapper
-    ├── tools.py             File/bash operations
     ├── scheduler.py         Smart scheduling
     ├── git_manager.py       Git automation
     ├── monitor.py           Health & metrics
@@ -91,20 +89,7 @@ src/
 
 ## Configuration
 
-**Key settings in config.yaml:**
-```yaml
-agent:
-  max_parallel_tasks: 3        # 1-10 concurrent
-  task_timeout_seconds: 3600   # Per task
-
-claude:
-  model: claude-opus-4-1-20250805
-  max_tokens: 4096
-
-credits:
-  window_size_hours: 5
-  max_tasks_per_window: 10
-```
+All runtime options come from environment variables loaded via `.env` (see `.env.example` for defaults). Update those values or export them to customize behavior.
 
 ## Monitoring
 
