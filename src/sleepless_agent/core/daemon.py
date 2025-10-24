@@ -5,6 +5,7 @@ import signal
 import sys
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 
 from loguru import logger
@@ -21,6 +22,7 @@ from sleepless_agent.core.scheduler import SmartScheduler, BudgetManager
 from sleepless_agent.core.task_queue import TaskQueue
 from sleepless_agent.core.auto_generator import AutoTaskGenerator
 from sleepless_agent.core.workspace import WorkspaceSetup
+from sleepless_agent.core.live_status import LiveStatusTracker
 
 # Setup loguru
 logger.remove()  # Remove default handler
@@ -44,6 +46,10 @@ class SleepleassAgent:
         self._init_directories()
         engine = init_db(str(self.config.agent.db_path))
         self.task_queue = TaskQueue(str(self.config.agent.db_path))
+
+        live_status_path = Path(self.config.agent.db_path).parent / "live_status.json"
+        self.live_status_tracker = LiveStatusTracker(live_status_path)
+        self.live_status_tracker.clear_all()
 
         # Create session for budget manager and auto-generator
         from sqlalchemy.orm import sessionmaker
@@ -72,6 +78,7 @@ class SleepleassAgent:
         self.claude = ClaudeCodeExecutor(
             workspace_root=str(self.config.agent.workspace_root),
             default_timeout=self.config.claude_code.default_timeout,
+            live_status_tracker=self.live_status_tracker,
         )
         self.results = ResultManager(
             str(self.config.agent.db_path),
@@ -99,6 +106,7 @@ class SleepleassAgent:
             scheduler=self.scheduler,
             monitor=self.monitor,
             report_generator=self.report_generator,
+            live_status_tracker=self.live_status_tracker,
         )
 
         # Setup signal handlers
@@ -116,6 +124,8 @@ class SleepleassAgent:
         """Handle shutdown signals"""
         logger.info(f"Received signal {sig}, shutting down...")
         self.running = False
+        if hasattr(self, "live_status_tracker"):
+            self.live_status_tracker.clear_all()
         self.bot.stop()
         sys.exit(0)
 
@@ -348,6 +358,9 @@ class SleepleassAgent:
                 )
                 self.bot.send_message(task.assigned_to, message)
 
+            if self.live_status_tracker:
+                self.live_status_tracker.clear(task.id)
+
             logger.info(f"Task {task.id} completed successfully")
 
         except Exception as e:
@@ -399,6 +412,9 @@ class SleepleassAgent:
                         f"Will resume automatically in ~{sleep_seconds / 60:.0f} minutes",
                     )
 
+                if self.live_status_tracker:
+                    self.live_status_tracker.clear(task.id)
+
                 # Sleep until reset
                 if sleep_seconds > 0:
                     logger.info(f"Sleeping until {e.reset_time.strftime('%H:%M:%S')}...")
@@ -446,6 +462,9 @@ class SleepleassAgent:
             # Notify user
             if task.assigned_to:
                 self.bot.send_message(task.assigned_to, f"❌ Task #{task.id} failed: {str(e)}")
+
+            if self.live_status_tracker:
+                self.live_status_tracker.clear(task.id)
 
     def _check_and_summarize_daily_reports(self):
         """Check if it's end of day and summarize reports"""

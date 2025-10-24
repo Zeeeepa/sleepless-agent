@@ -1,6 +1,7 @@
 """Slack bot interface for task management"""
 
 import json
+from datetime import datetime
 from typing import Optional
 
 from loguru import logger
@@ -10,16 +11,27 @@ from slack_sdk.socket_mode import SocketModeClient
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
 
-from sleepless_agent.core.models import TaskPriority
+from sleepless_agent.core.display import format_age_seconds, format_duration, relative_time, shorten
+from sleepless_agent.core.models import TaskPriority, TaskStatus
 from sleepless_agent.core.task_queue import TaskQueue
 from sleepless_agent.core.task_utils import parse_task_description, slugify_project
+from sleepless_agent.core.live_status import LiveStatusTracker
 from sleepless_agent.monitoring.report_generator import ReportGenerator
 
 
 class SlackBot:
     """Slack bot for task management"""
 
-    def __init__(self, bot_token: str, app_token: str, task_queue: TaskQueue, scheduler=None, monitor=None, report_generator=None):
+    def __init__(
+        self,
+        bot_token: str,
+        app_token: str,
+        task_queue: TaskQueue,
+        scheduler=None,
+        monitor=None,
+        report_generator=None,
+        live_status_tracker: Optional[LiveStatusTracker] = None,
+    ):
         """Initialize Slack bot"""
         self.bot_token = bot_token
         self.app_token = app_token
@@ -27,6 +39,7 @@ class SlackBot:
         self.scheduler = scheduler
         self.monitor = monitor
         self.report_generator = report_generator
+        self.live_status_tracker = live_status_tracker
         self.client = WebClient(token=bot_token)
         self.socket_mode_client = SocketModeClient(app_token=app_token, web_client=self.client)
 
@@ -203,35 +216,9 @@ class SlackBot:
     def handle_check_command(self, response_url: str):
         """Handle /check command - comprehensive system status"""
         try:
-            # System health
-            health = self.monitor.check_health() if self.monitor else {}
-            status_emoji = {
-                "healthy": "✅",
-                "degraded": "⚠️",
-                "unhealthy": "❌",
-            }.get(health.get("status", "unknown"), "❓")
-
-            system = health.get("system", {})
-
-            message = (
-                f"{status_emoji} System: {health.get('status', 'unknown').upper()}\n"
-                f"⏱️ Uptime: {health.get('uptime_human', 'N/A')}\n"
-                f"🖥️ CPU: {system.get('cpu_percent', 'N/A')}%\n"
-                f"💾 Memory: {system.get('memory_percent', 'N/A')}%\n\n"
-            )
-
-            # Queue status
-            queue_status = self.task_queue.get_queue_status()
-            message += (
-                f"📊 Queue\n"
-                f"Total: {queue_status['total']}\n"
-                f"Pending: {queue_status['pending']}\n"
-                f"In Progress: {queue_status['in_progress']}\n"
-                f"Completed: {queue_status['completed']}\n"
-                f"Failed: {queue_status['failed']}"
-            )
-
-            self.send_response(response_url, message)
+            blocks = self._build_check_blocks()
+            fallback_message = self._build_check_message()
+            self.send_response(response_url, message=fallback_message, blocks=blocks)
         except Exception as e:
             self.send_response(response_url, f"Failed to get status: {str(e)}")
             logger.error(f"Failed to get status: {e}")
@@ -292,13 +279,31 @@ class SlackBot:
             self.send_response(response_url, f"Failed to move to trash: {str(e)}")
             logger.error(f"Failed to cancel: {e}")
 
-    def send_response(self, response_url: str, message: str):
-        """Send response to Slack"""
+    def send_response(self, response_url: str, message: str = None, blocks: list = None):
+        """Send response to Slack
+
+        Args:
+            response_url: Slack response URL
+            message: Plain text fallback message
+            blocks: Block Kit blocks for rich formatting
+        """
         try:
             import requests
+            payload = {}
+
+            # If blocks provided, use them; otherwise use plain text
+            if blocks:
+                payload["blocks"] = blocks
+            if message:
+                payload["text"] = message
+
+            # Ensure at least text or blocks are provided
+            if not payload:
+                payload["text"] = "No message"
+
             requests.post(
                 response_url,
-                json={"text": message},
+                json=payload,
                 timeout=5,
             )
         except Exception as e:
@@ -507,3 +512,497 @@ class SlackBot:
         except Exception as e:
             self.send_response(response_url, f"Failed to get report: {str(e)}")
             logger.error(f"Failed to get report: {e}")
+
+    def _block_header(self, text: str) -> dict:
+        """Create a header block"""
+        return {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": text,
+                "emoji": True
+            }
+        }
+
+    def _block_divider(self) -> dict:
+        """Create a divider block"""
+        return {"type": "divider"}
+
+    def _block_section(self, text: str, markdown: bool = False) -> dict:
+        """Create a section block with text"""
+        return {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn" if markdown else "plain_text",
+                "text": text,
+                "emoji": True
+            }
+        }
+
+    def _block_section_fields(self, fields: list[dict]) -> dict:
+        """Create a section block with fields
+
+        Args:
+            fields: List of dicts with 'label' and 'value' keys
+        """
+        field_blocks = []
+        for field in fields:
+            field_blocks.append({
+                "type": "mrkdwn",
+                "text": f"*{field['label']}*\n{field['value']}"
+            })
+        return {
+            "type": "section",
+            "fields": field_blocks
+        }
+
+    def _block_context(self, text: str) -> dict:
+        """Create a context block for metadata"""
+        return {
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": text
+                }
+            ]
+        }
+
+    def _build_check_blocks(self) -> list[dict]:
+        """Build Block Kit blocks for status check response"""
+        escape = self._escape_slack
+        blocks = []
+
+        health = self.monitor.check_health() if self.monitor else {}
+        status = str(health.get("status", "unknown"))
+        status_emoji = {
+            "healthy": "✅",
+            "degraded": "⚠️",
+            "unhealthy": "❌",
+        }.get(status.lower(), "❔")
+
+        system = health.get("system", {})
+
+        def fmt_percent(value):
+            if isinstance(value, (int, float)):
+                return f"{float(value):.1f}"
+            if value in (None, ""):
+                return "N/A"
+            return str(value)
+
+        uptime = escape(health.get("uptime_human", "< 1m"))
+        cpu_text = fmt_percent(system.get("cpu_percent"))
+        mem_text = fmt_percent(system.get("memory_percent"))
+
+        # Header with status
+        blocks.append(self._block_header(f"{status_emoji} Sleepless Agent Status"))
+
+        # System info
+        blocks.append(self._block_section(
+            f"Uptime: `{uptime}` · CPU: `{cpu_text}%` · Memory: `{mem_text}%`",
+            markdown=True
+        ))
+
+        blocks.append(self._block_divider())
+
+        # Queue section
+        blocks.append(self._block_header("Queue"))
+        queue_status = self.task_queue.get_queue_status()
+        queue_fields = [
+            {"label": "Pending", "value": str(queue_status['pending'])},
+            {"label": "In Progress", "value": str(queue_status['in_progress'])},
+            {"label": "Completed", "value": str(queue_status['completed'])},
+            {"label": "Failed", "value": str(queue_status['failed'])},
+        ]
+        blocks.append(self._block_section_fields(queue_fields))
+
+        # Lifetime stats if available
+        if self.monitor:
+            stats = self.monitor.get_stats()
+            success_rate = stats.get("success_rate")
+            success_text = f"{success_rate:.1f}%" if success_rate is not None else "—"
+            lifetime_info = f"*Lifetime:* Completed `{stats['tasks_completed']}`, Failed `{stats['tasks_failed']}`, Success `{success_text}`"
+            if stats.get("avg_processing_time") is not None:
+                lifetime_info += f" · Avg Duration `{format_duration(stats.get('avg_processing_time'))}`"
+            blocks.append(self._block_section(lifetime_info, markdown=True))
+
+        blocks.append(self._block_divider())
+
+        # Active tasks section
+        blocks.append(self._block_header("Active Tasks"))
+        running_tasks = self.task_queue.get_in_progress_tasks()
+        if running_tasks:
+            for task in running_tasks[:3]:
+                project = task.project_name or task.project_id or "—"
+                project_text = escape(project)
+                owner = f"<@{task.assigned_to}>" if task.assigned_to else "—"
+                elapsed_seconds = (
+                    (datetime.utcnow() - task.started_at).total_seconds()
+                    if task.started_at
+                    else None
+                )
+                elapsed_text = format_duration(elapsed_seconds)
+                description = escape(shorten(task.description, 80))
+                task_text = f"*#{task.id}* `{project_text}` — {description}\n_Owner: {owner} · Elapsed: {elapsed_text}_"
+                blocks.append(self._block_section(task_text, markdown=True))
+        else:
+            blocks.append(self._block_section("No active tasks", markdown=True))
+
+        blocks.append(self._block_divider())
+
+        # Pending tasks section
+        blocks.append(self._block_header("Next Up"))
+        pending_tasks = self.task_queue.get_pending_tasks(limit=3)
+        if pending_tasks:
+            for task in pending_tasks:
+                project = task.project_name or task.project_id
+                context_parts = []
+                if project:
+                    context_parts.append(f"`{escape(project)}`")
+                context_parts.append(f"queued {relative_time(task.created_at)}")
+                context = " · ".join(context_parts)
+                description = escape(shorten(task.description, 80))
+                priority = task.priority.value.capitalize()
+                task_text = f"*#{task.id} {priority}* — {description}\n_{context}_"
+                blocks.append(self._block_section(task_text, markdown=True))
+        else:
+            blocks.append(self._block_section("Queue is clear", markdown=True))
+
+        # Projects section
+        projects = self.task_queue.get_projects()
+        if projects:
+            blocks.append(self._block_divider())
+            blocks.append(self._block_header("Projects"))
+            projects_sorted = sorted(projects, key=lambda p: p["total_tasks"], reverse=True)
+            display_limit = 4
+            for proj in projects_sorted[:display_limit]:
+                name = escape(proj["project_name"] or proj["project_id"] or "—")
+                proj_text = f"*{name}*\nPending: `{proj['pending']}` · Running: `{proj['in_progress']}` · Completed: `{proj['completed']}`"
+                blocks.append(self._block_section(proj_text, markdown=True))
+            if len(projects_sorted) > display_limit:
+                blocks.append(self._block_context(f"… and {len(projects_sorted) - display_limit} more projects"))
+
+        blocks.append(self._block_divider())
+
+        # Storage section
+        blocks.append(self._block_header("Storage"))
+        db = health.get("database", {})
+        storage = health.get("storage", {})
+        storage_fields = []
+        if db:
+            if db.get("accessible"):
+                storage_fields.append({
+                    "label": "Database",
+                    "value": f"{db.get('size_mb', 'N/A')} MB (updated {format_age_seconds(db.get('modified_ago_seconds'))})"
+                })
+            else:
+                storage_fields.append({"label": "Database", "value": "unavailable"})
+        if storage:
+            if storage.get("accessible"):
+                storage_fields.append({
+                    "label": "Results",
+                    "value": f"{storage.get('count', 0)} files · {storage.get('total_size_mb', 0)} MB"
+                })
+            else:
+                storage_fields.append({"label": "Results", "value": "unavailable"})
+        if storage_fields:
+            blocks.append(self._block_section_fields(storage_fields))
+
+        # Usage section
+        budget_info = None
+        if self.scheduler:
+            try:
+                budget_info = self.scheduler.get_credit_status()
+            except Exception as exc:
+                logger.debug(f"Failed to fetch credit status: {exc}")
+
+        if budget_info:
+            blocks.append(self._block_divider())
+            blocks.append(self._block_header("Usage"))
+            budget = budget_info.get("budget", {})
+            window = budget_info.get("current_window", {})
+
+            period = "Night" if budget.get("is_nighttime") else "Day"
+            remaining = budget.get("remaining_budget_usd")
+            quota = budget.get("current_quota_usd")
+            remaining_val = None
+            quota_val = None
+            try:
+                if remaining is not None:
+                    remaining_val = float(remaining)
+                if quota is not None:
+                    quota_val = float(quota)
+            except (TypeError, ValueError):
+                remaining_val = quota_val = None
+
+            usage_fields = []
+            if remaining_val is not None and quota_val is not None:
+                usage_fields.append({
+                    "label": f"{period} Period",
+                    "value": f"${remaining_val:.2f} / ${quota_val:.2f}"
+                })
+
+            if window:
+                executed = window.get("tasks_executed", 0) or 0
+                remaining_minutes = window.get("time_remaining_minutes") or 0
+                usage_fields.append({
+                    "label": "Window",
+                    "value": f"{executed} tasks · {format_duration(remaining_minutes * 60)} left"
+                })
+
+            if usage_fields:
+                blocks.append(self._block_section_fields(usage_fields))
+
+        blocks.append(self._block_divider())
+
+        # Recent activity section
+        blocks.append(self._block_header("Recent Activity"))
+        recent_tasks = self.task_queue.get_recent_tasks(limit=5)
+        if recent_tasks:
+            status_icons = {
+                TaskStatus.COMPLETED: "✅",
+                TaskStatus.IN_PROGRESS: "🔄",
+                TaskStatus.PENDING: "🕒",
+                TaskStatus.FAILED: "❌",
+                TaskStatus.CANCELLED: "🗑️",
+            }
+            for task in recent_tasks:
+                icon = status_icons.get(task.status, "•")
+                description = escape(shorten(task.description, 70))
+                status_label = task.status.value.replace('_', ' ')
+                activity_text = f"{icon} *#{task.id}* {description}\n_{status_label} · {relative_time(task.created_at)}_"
+                blocks.append(self._block_section(activity_text, markdown=True))
+        else:
+            blocks.append(self._block_section("No recent activity", markdown=True))
+
+        return blocks
+
+    def _build_check_message(self) -> str:
+        escape = self._escape_slack
+
+        health = self.monitor.check_health() if self.monitor else {}
+        status = str(health.get("status", "unknown"))
+        status_emoji = {
+            "healthy": "✅",
+            "degraded": "⚠️",
+            "unhealthy": "❌",
+        }.get(status.lower(), "❔")
+
+        system = health.get("system", {})
+
+        def fmt_percent(value):
+            if isinstance(value, (int, float)):
+                return f"{float(value):.1f}"
+            if value in (None, ""):
+                return "N/A"
+            return str(value)
+
+        uptime = escape(health.get("uptime_human", "< 1m"))
+        cpu_text = fmt_percent(system.get("cpu_percent"))
+        mem_text = fmt_percent(system.get("memory_percent"))
+
+        lines: list[str] = []
+        lines.append("*Sleepless Agent Status*")
+        lines.append(
+            f"{status_emoji} *{escape(status.upper())}* · "
+            f"Uptime `{uptime}` · CPU `{cpu_text}%` · Memory `{mem_text}%`"
+        )
+
+        queue_status = self.task_queue.get_queue_status()
+        lines.append("")
+        lines.append("*Queue*")
+        lines.append(
+            f"• Pending *{queue_status['pending']}* | "
+            f"In progress *{queue_status['in_progress']}* | "
+            f"Completed *{queue_status['completed']}* | "
+            f"Failed *{queue_status['failed']}*"
+        )
+
+        if self.monitor:
+            stats = self.monitor.get_stats()
+            success_rate = stats.get("success_rate")
+            success_text = f"{success_rate:.1f}%" if success_rate is not None else "—"
+            lines.append(
+                f"• Lifetime: Completed *{stats['tasks_completed']}*, "
+                f"Failed *{stats['tasks_failed']}*, Success {success_text}"
+            )
+            avg_time = stats.get("avg_processing_time")
+            if avg_time is not None:
+                lines.append(f"• Avg Duration: {format_duration(avg_time)}")
+
+        live_entries = []
+        if self.live_status_tracker:
+            try:
+                live_entries = self.live_status_tracker.entries()
+            except Exception as exc:  # pragma: no cover - diagnostics
+                logger.debug(f"Live status unavailable: {exc}")
+                live_entries = []
+
+        lines.append("")
+        lines.append("*Live Sessions*")
+        if live_entries:
+            max_items = 3
+            for entry in live_entries[:max_items]:
+                try:
+                    updated_dt = datetime.fromisoformat(entry.updated_at)
+                except Exception:
+                    updated_dt = None
+                age_text = relative_time(updated_dt) if updated_dt else "just now"
+                phase_text = escape(entry.phase.replace("_", " ").title())
+                status_text = escape(entry.status.replace("_", " ").title())
+                query_preview = escape(shorten(entry.prompt_preview or "—", 60))
+                answer_preview = escape(shorten(entry.answer_preview or "—", 40))
+                lines.append(
+                    f"• #{entry.task_id} {phase_text} ({status_text}) — \"{query_preview}\" -> \"{answer_preview}\" [{age_text}]"
+                )
+            remaining = len(live_entries) - max_items
+            if remaining > 0:
+                lines.append(f"• ... {remaining} more session(s)")
+        else:
+            lines.append("• None")
+
+        running_tasks = self.task_queue.get_in_progress_tasks()
+        lines.append("")
+        lines.append("*Active Tasks*")
+        if running_tasks:
+            for task in running_tasks[:3]:
+                project = task.project_name or task.project_id or "—"
+                project_text = escape(project)
+                owner = f"<@{task.assigned_to}>" if task.assigned_to else "—"
+                elapsed_seconds = (
+                    (datetime.utcnow() - task.started_at).total_seconds()
+                    if task.started_at
+                    else None
+                )
+                elapsed_text = format_duration(elapsed_seconds)
+                description = escape(shorten(task.description, 80))
+                lines.append(
+                    f"• #{task.id} `{project_text}` — {description} "
+                    f"(owner {owner}, elapsed {elapsed_text})"
+                )
+        else:
+            lines.append("• None")
+
+        pending_tasks = self.task_queue.get_pending_tasks(limit=3)
+        lines.append("")
+        lines.append("*Next Up*")
+        if pending_tasks:
+            for task in pending_tasks:
+                project = task.project_name or task.project_id
+                context_parts = []
+                if project:
+                    context_parts.append(f"`{escape(project)}`")
+                context_parts.append(f"queued {relative_time(task.created_at)}")
+                context = " · ".join(context_parts)
+                description = escape(shorten(task.description, 80))
+                priority = task.priority.value.capitalize()
+                lines.append(f"• #{task.id} {priority} — {description} ({context})")
+        else:
+            lines.append("• Queue is clear")
+
+        projects = self.task_queue.get_projects()
+        if projects:
+            lines.append("")
+            lines.append("*Projects*")
+            projects_sorted = sorted(projects, key=lambda p: p["total_tasks"], reverse=True)
+            display_limit = 4
+            for proj in projects_sorted[:display_limit]:
+                name = escape(proj["project_name"] or proj["project_id"] or "—")
+                lines.append(
+                    f"• {name} — pending {proj['pending']}, "
+                    f"running {proj['in_progress']}, completed {proj['completed']}"
+                )
+            if len(projects_sorted) > display_limit:
+                lines.append(f"• … and {len(projects_sorted) - display_limit} more")
+
+        db = health.get("database", {})
+        storage = health.get("storage", {})
+        lines.append("")
+        lines.append("*Storage*")
+        if db:
+            if db.get("accessible"):
+                lines.append(
+                    f"• DB: {db.get('size_mb', 'N/A')} MB "
+                    f"(updated {format_age_seconds(db.get('modified_ago_seconds'))})"
+                )
+            else:
+                lines.append("• DB: unavailable")
+        if storage:
+            if storage.get("accessible"):
+                lines.append(
+                    f"• Results: {storage.get('count', 0)} files · "
+                    f"{storage.get('total_size_mb', 0)} MB"
+                )
+            else:
+                lines.append("• Results: unavailable")
+
+        budget_info = None
+        if self.scheduler:
+            try:
+                budget_info = self.scheduler.get_credit_status()
+            except Exception as exc:
+                logger.debug(f"Failed to fetch credit status: {exc}")
+
+        if budget_info:
+            budget = budget_info.get("budget", {})
+            window = budget_info.get("current_window", {})
+            lines.append("")
+            lines.append("*Usage*")
+
+            period = "Night" if budget.get("is_nighttime") else "Day"
+            remaining = budget.get("remaining_budget_usd")
+            quota = budget.get("current_quota_usd")
+            remaining_val = None
+            quota_val = None
+            try:
+                if remaining is not None:
+                    remaining_val = float(remaining)
+                if quota is not None:
+                    quota_val = float(quota)
+            except (TypeError, ValueError):
+                remaining_val = quota_val = None
+
+            if remaining_val is not None and quota_val is not None:
+                lines.append(
+                    f"• {period} period · Remaining ${remaining_val:.2f} / ${quota_val:.2f}"
+                )
+
+            if window:
+                executed = window.get("tasks_executed", 0) or 0
+                remaining_minutes = window.get("time_remaining_minutes") or 0
+                lines.append(
+                    f"• Window: {executed} tasks · "
+                    f"{format_duration(remaining_minutes * 60)} left"
+                )
+
+        recent_tasks = self.task_queue.get_recent_tasks(limit=5)
+        if recent_tasks:
+            lines.append("")
+            lines.append("*Recent Activity*")
+            status_icons = {
+                TaskStatus.COMPLETED: "✅",
+                TaskStatus.IN_PROGRESS: "🔄",
+                TaskStatus.PENDING: "🕒",
+                TaskStatus.FAILED: "❌",
+                TaskStatus.CANCELLED: "🗑️",
+            }
+            for task in recent_tasks:
+                icon = status_icons.get(task.status, "•")
+                description = escape(shorten(task.description, 70))
+                lines.append(
+                    f"{icon} #{task.id} {description} — "
+                    f"{task.status.value.replace('_', ' ')} ({relative_time(task.created_at)})"
+                )
+
+        return "\n".join(lines)
+
+    def _escape_slack(self, text: Optional[str]) -> str:
+        if text is None:
+            return ""
+        text = str(text)
+        replacements = {"&": "&amp;", "<": "&lt;", ">": "&gt;"}
+        for char, replacement in replacements.items():
+            text = text.replace(char, replacement)
+        for char in ("*", "_", "`", "~"):
+            text = text.replace(char, f"\\{char}")
+        return text

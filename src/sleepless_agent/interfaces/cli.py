@@ -15,8 +15,8 @@ from typing import Optional
 from loguru import logger
 from rich import box
 from rich.align import Align
-from rich.columns import Columns
 from rich.console import Console
+from rich.layout import Layout
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -24,6 +24,8 @@ from rich.text import Text
 from sleepless_agent.config import get_config
 from sleepless_agent.core import TaskPriority, TaskQueue, init_db
 from sleepless_agent.core.models import TaskStatus
+from sleepless_agent.core.display import format_age_seconds, format_duration, relative_time, shorten
+from sleepless_agent.core.live_status import LiveStatusTracker
 from sleepless_agent.core.task_utils import parse_task_description, slugify_project
 from sleepless_agent.monitoring.monitor import HealthMonitor
 from sleepless_agent.monitoring.report_generator import ReportGenerator
@@ -152,7 +154,7 @@ def command_check(ctx: CLIContext) -> int:
     if db:
         storage_table.add_row(
             "Database",
-            f"{db.get('size_mb', 'N/A')} MB · { _format_age_seconds(db.get('modified_ago_seconds')) }",
+            f"{db.get('size_mb', 'N/A')} MB · {format_age_seconds(db.get('modified_ago_seconds'))}",
         )
     else:
         storage_table.add_row("Database", "—")
@@ -189,7 +191,7 @@ def command_check(ctx: CLIContext) -> int:
             "All-Time",
             str(metrics_summary["total"]),
             f"{success_rate:.1f}%" if success_rate is not None else "—",
-            _format_duration(metrics_summary["avg_duration"]),
+            format_duration(metrics_summary["avg_duration"]),
         )
     else:
         metrics_table.add_row("All-Time", "0", "—", "—")
@@ -200,12 +202,51 @@ def command_check(ctx: CLIContext) -> int:
             "Last 24h",
             str(metrics_summary["recent_total"]),
             f"{recent_rate:.1f}%" if recent_rate is not None else "—",
-            _format_duration(metrics_summary["recent_avg_duration"]),
+            format_duration(metrics_summary["recent_avg_duration"]),
         )
     else:
         metrics_table.add_row("Last 24h", "0", "—", "—")
 
     metrics_panel = Panel(metrics_table, border_style="yellow")
+
+    live_entries = []
+    try:
+        tracker = LiveStatusTracker(ctx.db_path.parent / "live_status.json")
+        live_entries = tracker.entries()
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.debug(f"Live status unavailable: {exc}")
+        live_entries = []
+
+    live_table = Table(
+        box=box.MINIMAL_DOUBLE_HEAD,
+        expand=True,
+        title=f"Live Sessions ({len(live_entries)})",
+    )
+    live_table.add_column("Task", style="bold")
+    live_table.add_column("Phase", style="cyan")
+    live_table.add_column("Query", overflow="fold")
+    live_table.add_column("Answer", overflow="fold")
+    live_table.add_column("Updated", justify="right")
+
+    for entry in live_entries:
+        updated_dt = _parse_timestamp(entry.updated_at)
+        updated_text = relative_time(updated_dt) if updated_dt else "—"
+        live_table.add_row(
+            f"#{entry.task_id}",
+            entry.phase.title(),
+            shorten(entry.prompt_preview, limit=60) if entry.prompt_preview else "—",
+            shorten(entry.answer_preview, limit=60) if entry.answer_preview else "—",
+            updated_text,
+        )
+
+    if live_entries:
+        live_panel = Panel(live_table, border_style="bright_cyan")
+    else:
+        live_panel = Panel(
+            Align.center(Text("No active Claude sessions.", style="dim")),
+            title="Live Sessions",
+            border_style="bright_cyan",
+        )
 
     running_tasks = ctx.task_queue.get_in_progress_tasks()
     running_table = Table(
@@ -228,10 +269,10 @@ def command_check(ctx: CLIContext) -> int:
         running_table.add_row(
             str(task.id),
             task.project_name or task.project_id or "—",
-            _shorten(task.description),
+            shorten(task.description),
             task.assigned_to or "—",
             task.started_at.isoformat(sep=" ", timespec="minutes") if task.started_at else "—",
-            _format_duration(elapsed),
+            format_duration(elapsed),
         )
 
     if running_tasks:
@@ -262,8 +303,8 @@ def command_check(ctx: CLIContext) -> int:
             task.priority.value,
             task.project_name or task.project_id or "—",
             task.created_at.isoformat(sep=" ", timespec="minutes"),
-            _relative_time(task.created_at),
-            _shorten(task.description),
+            relative_time(task.created_at),
+            shorten(task.description),
         )
 
     if pending_tasks:
@@ -324,26 +365,62 @@ def command_check(ctx: CLIContext) -> int:
             str(task.id),
             f"{icon} {task.status.value}",
             task.project_name or task.project_id or "—",
-            _relative_time(task.created_at),
-            _shorten(task.description),
+            relative_time(task.created_at),
+            shorten(task.description),
         )
     recent_panel = Panel(recent_table, border_style="orange1")
 
-    console.print()
-    console.print(Text("Sleepless Agent Status", style="bold magenta"), justify="center")
-    console.print()
+    # Create hierarchical layout with regions
+    layout = Layout(name="root")
+    layout.split_column(
+        Layout(name="header", size=3),
+        Layout(name="top_section", size=10),
+        Layout(name="middle_section", size=12),
+        Layout(name="tasks_section"),
+    )
 
-    console.print(Columns([health_panel, storage_panel], equal=True, expand=True))
-    console.print()
-    console.print(Columns([queue_panel, metrics_panel], equal=True, expand=True))
-    console.print()
-    console.print(Columns([running_panel, pending_panel], equal=True, expand=True))
-    console.print()
+    # Header
+    layout["header"].update(
+        Panel(
+            Text("Sleepless Agent Dashboard", style="bold bright_magenta"),
+            border_style="bright_magenta",
+        )
+    )
+
+    # Top section: System Health + Storage
+    layout["top_section"].split_row(
+        Layout(name="health", ratio=1),
+        Layout(name="storage", ratio=1),
+    )
+    layout["top_section"]["health"].update(health_panel)
+    layout["top_section"]["storage"].update(storage_panel)
+
+    # Middle section: Queue + Metrics
+    layout["middle_section"].split_row(
+        Layout(name="queue", ratio=1),
+        Layout(name="metrics", ratio=1),
+    )
+    layout["middle_section"]["queue"].update(queue_panel)
+    layout["middle_section"]["metrics"].update(metrics_panel)
+
+    # Tasks section: Split into dynamic subsections
+    tasks_layout = layout["tasks_section"]
+    sections: list[tuple[str, Panel]] = [
+        ("live_section", live_panel),
+        ("running_section", running_panel),
+        ("pending_section", pending_panel),
+    ]
     if project_panel:
-        console.print(project_panel)
-        console.print()
-    console.print(recent_panel)
+        sections.append(("projects_section", project_panel))
+    sections.append(("recent_section", recent_panel))
+
+    layouts = [Layout(name=name, ratio=1) for name, _ in sections]
+    tasks_layout.split_column(*layouts)
+    for name, panel in sections:
+        tasks_layout[name].update(panel)
+
     console.print()
+    console.print(layout)
 
     return 0
 
@@ -433,50 +510,6 @@ def _load_metrics(logs_dir: Path) -> list[dict]:
             except json.JSONDecodeError:  # pragma: no cover - log noise
                 logger.warning("Failed to parse metrics line: {}", line)
     return entries
-
-
-def _format_duration(seconds: Optional[float]) -> str:
-    """Turn seconds into a compact human-readable duration."""
-    if seconds is None:
-        return "—"
-    seconds = int(abs(seconds))
-    hours, remainder = divmod(seconds, 3600)
-    minutes, secs = divmod(remainder, 60)
-    parts: list[str] = []
-    if hours:
-        parts.append(f"{hours}h")
-    if minutes:
-        parts.append(f"{minutes}m")
-    if secs or not parts:
-        parts.append(f"{secs}s")
-    return " ".join(parts)
-
-
-def _relative_time(dt: Optional[datetime]) -> str:
-    """Return relative time string (e.g., '5m ago')."""
-    if not dt:
-        return "—"
-    now = datetime.utcnow()
-    delta = now - dt
-    suffix = "ago"
-    if delta.total_seconds() < 0:
-        delta = -delta
-        suffix = "from now"
-    return f"{_format_duration(delta.total_seconds())} {suffix}"
-
-
-def _shorten(text: str, limit: int = 70) -> str:
-    """Compress whitespace and truncate to limit with ellipsis."""
-    clean = " ".join(text.strip().split())
-    if len(clean) <= limit:
-        return clean
-    return clean[: limit - 1].rstrip() + "…"
-
-
-def _format_age_seconds(seconds: Optional[float]) -> str:
-    if seconds is None:
-        return "N/A"
-    return _format_duration(seconds) + " ago"
 
 
 def _parse_timestamp(timestamp: Optional[str]) -> Optional[datetime]:
