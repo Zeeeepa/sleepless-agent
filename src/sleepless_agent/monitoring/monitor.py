@@ -152,7 +152,7 @@ class HealthMonitor:
         health = self.check_health()
         stats = self.get_stats()
 
-        logger.info(
+        logger.debug(
             f"Health: {health['status']} | "
             f"Uptime: {health['uptime_human']} | "
             f"Tasks: {stats['tasks_completed']} ✓ {stats['tasks_failed']} ✗ | "

@@ -4,7 +4,7 @@ import re
 import subprocess
 import time
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict
 
 from claude_agent_sdk import (
     query,
@@ -20,6 +20,8 @@ from claude_agent_sdk import (
 )
 from loguru import logger
 
+from sleepless_agent.core.live_status import LiveStatusEntry, LiveStatusTracker
+
 
 class ClaudeCodeExecutor:
     """Execute tasks using Claude Code CLI via Python Agent SDK"""
@@ -28,6 +30,7 @@ class ClaudeCodeExecutor:
         self,
         workspace_root: str = "./workspace",
         default_timeout: int = 3600,
+        live_status_tracker: Optional[LiveStatusTracker] = None,
     ):
         """Initialize Claude Code executor
 
@@ -38,6 +41,8 @@ class ClaudeCodeExecutor:
         self.workspace_root = Path(workspace_root)
         self.default_timeout = default_timeout
         self.workspace_root.mkdir(parents=True, exist_ok=True)
+        self.live_status_tracker = live_status_tracker
+        self._live_context: Dict[int, Dict[str, Optional[str]]] = {}
 
         # Create workspace subdirectories
         self.tasks_dir = self.workspace_root / "tasks"
@@ -75,6 +80,46 @@ class ClaudeCodeExecutor:
         except Exception as e:
             logger.warning(f"Could not verify Claude Code CLI: {e}")
             # Don't fail initialization - let it fail on actual execution if needed
+
+    # ------------------------------------------------------------------ Live status helpers
+    def _live_update(
+        self,
+        task_id: int,
+        *,
+        phase: str,
+        prompt: Optional[str] = None,
+        answer: Optional[str] = None,
+        status: str = "running",
+    ) -> None:
+        """Publish live status updates if tracker is available."""
+        if not self.live_status_tracker:
+            return
+
+        context = self._live_context.get(task_id, {})
+        try:
+            entry = LiveStatusEntry(
+                task_id=task_id,
+                description=context.get("description", ""),
+                project_name=context.get("project_name"),
+                phase=phase,
+                prompt_preview=prompt or "",
+                answer_preview=answer or "",
+                status=status,
+            )
+            self.live_status_tracker.update(entry)
+        except Exception as exc:  # pragma: no cover - debug aid
+            logger.debug(f"Live status update failed for task {task_id}: {exc}")
+
+    def _live_clear(self, task_id: int) -> None:
+        """Remove live status tracking for the task."""
+        if not self.live_status_tracker:
+            return
+        try:
+            self.live_status_tracker.clear(task_id)
+        except Exception as exc:  # pragma: no cover - debug aid
+            logger.debug(f"Failed to clear live status for task {task_id}: {exc}")
+        finally:
+            self._live_context.pop(task_id, None)
 
     def _get_readme_template(self, template_type: str = "task") -> str:
         """Get README template content
@@ -556,6 +601,7 @@ Generated: {datetime.utcnow().isoformat()}
 
     async def _execute_planner_phase(
         self,
+        task_id: int,
         workspace: Path,
         description: str,
         context: str,
@@ -597,6 +643,8 @@ Output should be:
 - Any assumptions or potential blockers
 """
 
+        prompt_preview = " ".join(planner_prompt.split())
+
         usage_metrics = {
             "planner_cost_usd": None,
             "planner_duration_ms": None,
@@ -606,6 +654,14 @@ Output should be:
         try:
             output_parts = []
             start_time = time.time()
+
+            self._live_update(
+                task_id,
+                phase="planner",
+                prompt=prompt_preview,
+                answer="",
+                status="running",
+            )
 
             options = ClaudeAgentOptions(
                 cwd=str(workspace),
@@ -618,7 +674,16 @@ Output should be:
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
-                            output_parts.append(block.text)
+                            text = block.text.strip()
+                            if text:
+                                output_parts.append(text)
+                                self._live_update(
+                                    task_id,
+                                    phase="planner",
+                                    prompt=prompt_preview,
+                                    answer=text,
+                                    status="running",
+                                )
 
                 elif isinstance(message, ResultMessage):
                     usage_metrics["planner_cost_usd"] = message.total_cost_usd
@@ -633,6 +698,14 @@ Output should be:
             plan_text = "\n".join(output_parts)
             execution_time = int(time.time() - start_time)
 
+            self._live_update(
+                task_id,
+                phase="planner",
+                prompt=prompt_preview,
+                answer=plan_text,
+                status="completed",
+            )
+
             return plan_text, usage_metrics
 
         except Exception as e:
@@ -641,6 +714,7 @@ Output should be:
 
     async def _execute_worker_phase(
         self,
+        task_id: int,
         workspace: Path,
         description: str,
         plan_text: str,
@@ -675,6 +749,8 @@ Output should be:
 Please work through the plan systematically and update TodoWrite as you complete each item.
 """
 
+        prompt_preview = " ".join(worker_prompt.split())
+
         files_modified = set()
         commands_executed = []
         output_parts = []
@@ -689,6 +765,14 @@ Please work through the plan systematically and update TodoWrite as you complete
             files_before = self._get_workspace_files(workspace)
             start_time = time.time()
 
+            self._live_update(
+                task_id,
+                phase="worker",
+                prompt=prompt_preview,
+                answer="",
+                status="running",
+            )
+
             options = ClaudeAgentOptions(
                 cwd=str(workspace),
                 allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep", "TodoWrite"],
@@ -700,7 +784,16 @@ Please work through the plan systematically and update TodoWrite as you complete
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
-                            output_parts.append(block.text)
+                            text = block.text.strip()
+                            if text:
+                                output_parts.append(text)
+                                self._live_update(
+                                    task_id,
+                                    phase="worker",
+                                    prompt=prompt_preview,
+                                    answer=text,
+                                    status="running",
+                                )
                         elif isinstance(block, ToolUseBlock):
                             logger.info(f"Worker tool used: {block.name}")
 
@@ -713,11 +806,25 @@ Please work through the plan systematically and update TodoWrite as you complete
                                 command = block.input.get("command", "")
                                 if command:
                                     commands_executed.append(command)
+                                self._live_update(
+                                    task_id,
+                                    phase="worker",
+                                    prompt=prompt_preview,
+                                    answer=f"[Bash] {command}",
+                                    status="running",
+                                )
 
                 elif isinstance(message, ResultMessage):
                     success = not message.is_error
                     if message.result:
                         output_parts.append(f"\n[Result: {message.result}]")
+                        self._live_update(
+                            task_id,
+                            phase="worker",
+                            prompt=prompt_preview,
+                            answer=message.result,
+                            status="running",
+                        )
 
                     usage_metrics["worker_cost_usd"] = message.total_cost_usd
                     usage_metrics["worker_duration_ms"] = message.duration_ms
@@ -735,6 +842,15 @@ Please work through the plan systematically and update TodoWrite as you complete
 
             exit_code = 0 if success else 1
 
+            # Update final worker status
+            self._live_update(
+                task_id,
+                phase="worker",
+                prompt=prompt_preview,
+                answer=output_text,
+                status="completed" if exit_code == 0 else "error",
+            )
+
             return output_text, all_modified_files, commands_executed, exit_code, usage_metrics
 
         except Exception as e:
@@ -743,6 +859,7 @@ Please work through the plan systematically and update TodoWrite as you complete
 
     async def _execute_evaluator_phase(
         self,
+        task_id: int,
         workspace: Path,
         description: str,
         plan_text: str,
@@ -805,6 +922,16 @@ Output should include:
             output_parts = []
             start_time = time.time()
 
+            prompt_preview = " ".join(evaluator_prompt.split())
+
+            self._live_update(
+                task_id,
+                phase="evaluator",
+                prompt=prompt_preview,
+                answer="",
+                status="running",
+            )
+
             options = ClaudeAgentOptions(
                 cwd=str(workspace),
                 allowed_tools=["Read", "Glob"],
@@ -816,7 +943,16 @@ Output should include:
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
-                            output_parts.append(block.text)
+                            text = block.text.strip()
+                            if text:
+                                output_parts.append(text)
+                                self._live_update(
+                                    task_id,
+                                    phase="evaluator",
+                                    prompt=prompt_preview,
+                                    answer=text,
+                                    status="running",
+                                )
 
                 elif isinstance(message, ResultMessage):
                     usage_metrics["evaluator_cost_usd"] = message.total_cost_usd
@@ -830,6 +966,14 @@ Output should include:
 
             evaluation_text = "\n".join(output_parts)
             execution_time = int(time.time() - start_time)
+
+            self._live_update(
+                task_id,
+                phase="evaluator",
+                prompt=prompt_preview,
+                answer=evaluation_text,
+                status="completed",
+            )
 
             # Extract evaluation status, outstanding items, and recommendations
             status = self._extract_status_from_evaluation(evaluation_text)
@@ -953,6 +1097,19 @@ Output should include:
         """
         timeout = timeout or self.default_timeout
 
+        self._live_context[task_id] = {
+            "description": description,
+            "project_name": project_name,
+        }
+        kickoff_label = f"{task_type.replace('_', ' ').title()} task kickoff"
+        self._live_update(
+            task_id,
+            phase="initializing",
+            prompt=kickoff_label,
+            answer="",
+            status="running",
+        )
+
         try:
             # Create workspace (project-based if project_id provided)
             init_git = (priority == "serious")
@@ -1008,6 +1165,7 @@ Output should include:
                 logger.info(f"Phase 1: Planner Agent (max_turns={multi_agent_config.planner.max_turns})")
                 try:
                     plan_text, planner_metrics = await self._execute_planner_phase(
+                        task_id=task_id,
                         workspace=workspace,
                         description=description,
                         context=workspace_context,
@@ -1040,6 +1198,7 @@ Output should include:
                 logger.info(f"Phase 2: Worker Agent (max_turns={multi_agent_config.worker.max_turns})")
                 try:
                     worker_output, files_modified, commands_executed, exit_code, worker_metrics = await self._execute_worker_phase(
+                        task_id=task_id,
                         workspace=workspace,
                         description=description,
                         plan_text=plan_text,
@@ -1077,6 +1236,7 @@ Output should include:
                 logger.info(f"Phase 3: Evaluator Agent (max_turns={multi_agent_config.evaluator.max_turns})")
                 try:
                     evaluation_summary, eval_status, eval_outstanding, eval_recommendations, evaluator_metrics = await self._execute_evaluator_phase(
+                        task_id=task_id,
                         workspace=workspace,
                         description=description,
                         plan_text=plan_text,
@@ -1169,6 +1329,15 @@ Output should include:
             # Convert sets to sorted lists for return
             all_modified_files = sorted(list(all_files_modified))
 
+            last_section = all_output_parts[-1] if all_output_parts else ""
+            self._live_update(
+                task_id,
+                phase="completed",
+                prompt=description,
+                answer=last_section,
+                status="completed" if final_exit_code == 0 else "error",
+            )
+
             logger.info(
                 f"Task {task_id} completed in {execution_time}s "
                 f"(exit code: {final_exit_code}, files: {len(all_modified_files)}, cost: ${combined_metrics['total_cost_usd']:.4f})"
@@ -1177,20 +1346,50 @@ Output should include:
             return output_text, all_modified_files, all_commands_executed, final_exit_code, combined_metrics
 
         except CLINotFoundError:
+            self._live_update(
+                task_id,
+                phase="error",
+                prompt=description,
+                answer="Claude Code CLI not found",
+                status="error",
+            )
             logger.error("Claude Code CLI not found")
             raise RuntimeError(
                 "Claude Code CLI not found. "
                 "Please install with: npm install -g @anthropic-ai/claude-code"
             )
         except ProcessError as e:
+            self._live_update(
+                task_id,
+                phase="error",
+                prompt=description,
+                answer=str(e),
+                status="error",
+            )
             logger.error(f"Claude Code process error: {e}")
             raise RuntimeError(f"Claude Code process failed: {e}")
         except CLIJSONDecodeError as e:
+            self._live_update(
+                task_id,
+                phase="error",
+                prompt=description,
+                answer=str(e),
+                status="error",
+            )
             logger.error(f"Failed to parse Claude Code output: {e}")
             raise RuntimeError(f"Failed to parse Claude Code output: {e}")
         except Exception as e:
+            self._live_update(
+                task_id,
+                phase="error",
+                prompt=description,
+                answer=str(e),
+                status="error",
+            )
             logger.error(f"Failed to execute task {task_id}: {e}")
             raise
+        finally:
+            self._live_context.pop(task_id, None)
 
     def _build_prompt(self, description: str, task_type: str, priority: str) -> str:
         """Build enhanced prompt for Claude Code
