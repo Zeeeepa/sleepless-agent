@@ -1,357 +1,251 @@
-"""Git integration for auto-commits and PR creation"""
+"""Git integration helpers for consolidating task and project work."""
 
-import json
-import os
+from __future__ import annotations
+
 import subprocess
-from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 from loguru import logger
 
 
 class GitManager:
-    """Manages git operations for task results"""
+    """Manage a single workspace repository with branch-per-project workflow."""
 
-    def __init__(self, workspace_root: str, random_ideas_branch: str = "random-ideas"):
-        """Initialize git manager
+    def __init__(
+        self,
+        workspace_root: str,
+        default_task_branch: str = "tasks",
+        main_branch: str = "main",
+    ):
+        self.repo_path = Path(workspace_root).resolve()
+        self.default_task_branch = default_task_branch
+        self.main_branch = main_branch
 
-        Args:
-            workspace_root: Root directory containing isolated task workspaces
-            random_ideas_branch: Branch name for random thoughts
-        """
-        self.workspace_root = Path(workspace_root)
-        self.main_repo = Path.cwd()  # The sleepless-agent repo itself
-        self.random_ideas_branch = random_ideas_branch
-        self.original_branch = None
-
+    # ------------------------------------------------------------------
+    # Repository bootstrap
+    # ------------------------------------------------------------------
     def init_repo(self) -> bool:
-        """Initialize git repo in main repo if not already initialized"""
+        """Ensure workspace repo exists with an initial commit."""
         try:
-            if not (self.main_repo / ".git").exists():
-                self._run_git_in_repo(self.main_repo, "init")
-                self._run_git_in_repo(self.main_repo, "config", "user.email", "agent@sleepless.local")
-                self._run_git_in_repo(self.main_repo, "config", "user.name", "Sleepless Agent")
-                logger.info("Initialized git repo in main repo")
-                return True
+            self.repo_path.mkdir(parents=True, exist_ok=True)
+
+            if not self._repo_exists():
+                self._run_git("init")
+                self._run_git("config", "user.email", "agent@sleepless.local")
+                self._run_git("config", "user.name", "Sleepless Agent")
+                logger.info(f"Initialized git repo at {self.repo_path}")
+
+            if not self._has_commits():
+                gitkeep = self.repo_path / ".gitkeep"
+                gitkeep.touch(exist_ok=True)
+                self._run_git("add", ".gitkeep")
+                self._run_git("commit", "-m", "Initial commit")
+                logger.info("Created initial commit in workspace repo")
+
+            # Ensure the default task branch exists
+            if self.default_task_branch != self.main_branch:
+                self.ensure_branch(self.default_task_branch)
+
             return True
-        except Exception as e:
-            logger.error(f"Failed to init git repo: {e}")
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error(f"Failed to initialize workspace git repo: {exc}")
             return False
 
-    def create_random_ideas_branch(self) -> bool:
-        """Create random-ideas branch in main repo if it doesn't exist"""
-        try:
-            branches = self._run_git_in_repo(self.main_repo, "branch", "-a")
-            if self.random_ideas_branch not in branches:
-                self._run_git_in_repo(self.main_repo, "checkout", "-b", self.random_ideas_branch)
-                self._run_git_in_repo(self.main_repo, "checkout", "-")  # Switch back to original
-                logger.info(f"Created {self.random_ideas_branch} branch in main repo")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to create random-ideas branch: {e}")
-            return False
+    # ------------------------------------------------------------------
+    # Public branch helpers
+    # ------------------------------------------------------------------
+    def ensure_branch(self, branch: str):
+        """Create branch from main if it does not exist."""
+        if self._branch_exists(branch):
+            return
 
-    def commit_random_thought(
+        self._checkout(self.main_branch)
+        self._run_git("branch", branch, self.main_branch)
+        logger.info(f"Created branch '{branch}' from {self.main_branch}")
+
+    def commit_workspace_changes(
         self,
-        task_id: int,
-        task_workspace: Path,
-        description: str,
-        result_content: str,
-    ) -> Optional[str]:
-        """Commit a random thought from task workspace to random-ideas branch in main repo
-
-        Args:
-            task_id: Task ID
-            task_workspace: Path to task's isolated workspace
-            description: Task description
-            result_content: Result output from Claude Code
-
-        Returns:
-            Commit SHA if successful, None otherwise
-        """
-        try:
-            # Save original branch
-            self.original_branch = self._run_git_in_repo(
-                self.main_repo, "rev-parse", "--abbrev-ref", "HEAD"
-            ).strip()
-
-            # Switch to random-ideas branch
-            self._run_git_in_repo(self.main_repo, "checkout", self.random_ideas_branch)
-
-            # Create result file in main repo
-            timestamp = datetime.utcnow().isoformat()
-            filename = f"idea_{task_id}_{timestamp.replace(':', '-')}.md"
-            file_path = self.main_repo / filename
-
-            content = f"""# Task #{task_id}: {description}
-
-**Date**: {timestamp}
-**Workspace**: {task_workspace}
-
-## Result
-
-{result_content}
-"""
-            file_path.write_text(content)
-
-            # Commit
-            self._run_git_in_repo(self.main_repo, "add", filename)
-            commit_msg = f"[Random] Task #{task_id}: {description[:50]}"
-            commit_result = self._run_git_in_repo(self.main_repo, "commit", "-m", commit_msg)
-
-            # Extract commit hash
-            commit_hash = self._run_git_in_repo(self.main_repo, "rev-parse", "HEAD").strip()
-
-            logger.info(f"Committed random thought to main repo: {commit_hash}")
-
-            # Switch back
-            if self.original_branch:
-                self._run_git_in_repo(self.main_repo, "checkout", self.original_branch)
-
-            return commit_hash
-
-        except Exception as e:
-            logger.error(f"Failed to commit random thought: {e}")
-            try:
-                if self.original_branch:
-                    self._run_git_in_repo(self.main_repo, "checkout", self.original_branch)
-            except:
-                pass
-            return None
-
-    def commit_in_workspace(
-        self,
-        workspace: Path,
-        files: List[str],
+        branch: str,
+        workspace_path: Path,
+        files: Iterable[str],
         message: str,
     ) -> Optional[str]:
-        """Commit changes within an isolated task workspace
+        """Commit files from a task workspace into branch, merge to main, and push."""
+        self.init_repo()
+        self.ensure_branch(branch)
 
-        Args:
-            workspace: Path to task workspace
-            files: List of file paths (relative to workspace) to commit
-            message: Commit message
-
-        Returns:
-            Commit SHA if successful, None otherwise
-        """
-        try:
-            # Stage files
-            for file in files:
-                self._run_git_in_repo(workspace, "add", file)
-
-            # Commit
-            self._run_git_in_repo(workspace, "commit", "-m", message)
-
-            # Get commit hash
-            commit_hash = self._run_git_in_repo(workspace, "rev-parse", "HEAD").strip()
-
-            logger.info(f"Committed changes in workspace {workspace}: {commit_hash}")
-            return commit_hash
-
-        except Exception as e:
-            logger.error(f"Failed to commit in workspace: {e}")
+        repo_relative_files = self._normalize_files(workspace_path, files)
+        if not repo_relative_files:
+            logger.info(f"No tracked files to commit for branch '{branch}'")
             return None
 
-    def create_pr_from_workspace(
-        self,
-        task_workspace: Path,
-        task_id: int,
-        task_description: str,
-        branch: str,
-        base_branch: str = "main",
-    ) -> Optional[str]:
-        """Create PR from isolated workspace by pushing to remote
-
-        Args:
-            task_workspace: Path to task workspace
-            task_id: Task ID
-            task_description: Task description
-            branch: Branch name to push
-            base_branch: Base branch for PR
-
-        Returns:
-            PR URL if successful, None otherwise
-        """
         try:
-            # Check if gh is available
-            self._run_command_in_repo(task_workspace, "gh", "--version")
+            self._checkout(branch)
+            self._fast_forward_with_main(branch)
 
-            # Push branch to remote
-            # Note: This assumes the workspace git is connected to a remote
-            # For now, we'll skip actual push and just log
-            logger.warning(
-                f"PR creation from workspace not fully implemented yet. "
-                f"Workspace: {task_workspace}, branch: {branch}"
-            )
+            self._stage(repo_relative_files)
+            commit_sha = self._commit_if_needed(message)
+            if not commit_sha:
+                logger.info(f"No changes to commit for branch '{branch}'")
+                self._checkout(self.main_branch)
+                return None
 
-            title = f"[Task #{task_id}] {task_description[:60]}"
-            body = f"""## Task #{task_id}
+            self._merge_branch_into_main(branch)
+            self.push_all()
+            return commit_sha
 
-### Description
-{task_description}
-
-### Changes
-This PR contains automated changes from Sleepless Agent (Claude Code).
-
-### What to review
-- [ ] Code changes are correct
-- [ ] Tests pass
-- [ ] No breaking changes
-
----
-*Generated by Sleepless Agent with Claude Code*
-"""
-
-            # Create PR
-            # TODO: Implement actual PR creation from workspace
-            # This requires setting up remote in workspace and pushing
-            logger.info(f"Would create PR: {title}")
-            return None
-
-        except Exception as e:
-            logger.error(f"Failed to create PR from workspace: {e}")
-            return None
-
-    def get_current_branch(self, repo: Optional[Path] = None) -> str:
-        """Get current branch name
-
-        Args:
-            repo: Repository path (default: main_repo)
-
-        Returns:
-            Current branch name
-        """
-        repo = repo or self.main_repo
-        try:
-            return self._run_git_in_repo(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
-        except:
-            return "main"
-
-    def get_status(self, repo: Optional[Path] = None) -> dict:
-        """Get git status
-
-        Args:
-            repo: Repository path (default: main_repo)
-
-        Returns:
-            Dict with branch, dirty status, and status output
-        """
-        repo = repo or self.main_repo
-        try:
-            status = self._run_git_in_repo(repo, "status", "--porcelain")
-            branch = self.get_current_branch(repo)
-
-            return {
-                "branch": branch,
-                "dirty": bool(status.strip()),
-                "status": status,
-            }
-        except Exception as e:
-            logger.error(f"Failed to get git status: {e}")
-            return {}
-
-    def is_repo(self, repo: Optional[Path] = None) -> bool:
-        """Check if directory is a git repo
-
-        Args:
-            repo: Repository path (default: main_repo)
-
-        Returns:
-            True if directory is a git repo
-        """
-        repo = repo or self.main_repo
-        return (repo / ".git").exists()
-
-    def has_changes(self, repo: Optional[Path] = None) -> bool:
-        """Check if there are uncommitted changes
-
-        Args:
-            repo: Repository path (default: main_repo)
-
-        Returns:
-            True if there are uncommitted changes
-        """
-        repo = repo or self.main_repo
-        try:
-            status = self._run_git_in_repo(repo, "status", "--porcelain")
-            return bool(status.strip())
-        except:
-            return False
-
-    def _run_git_in_repo(self, repo: Path, *args) -> str:
-        """Run git command in specific repository
-
-        Args:
-            repo: Repository path
-            *args: Git command arguments
-
-        Returns:
-            Command stdout
-        """
-        return self._run_command_in_repo(repo, "git", *args)
-
-    def _run_command_in_repo(self, repo: Path, *args, timeout: int = 30) -> str:
-        """Run command in specific repository
-
-        Args:
-            repo: Repository path
-            *args: Command and arguments
-            timeout: Command timeout in seconds
-
-        Returns:
-            Command stdout
-        """
-        try:
-            result = subprocess.run(
-                args,
-                cwd=repo,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-
-            if result.returncode != 0:
-                raise RuntimeError(f"Command failed: {result.stderr}")
-
-            return result.stdout
-
-        except Exception as e:
-            logger.error(f"Command failed in {repo}: {' '.join(args)}: {e}")
+        except Exception as exc:
+            logger.error(f"Git workflow failed for branch '{branch}': {exc}")
             raise
 
+    def push_all(self):
+        """Push all branches to remote origin if configured."""
+        if not self._has_remote("origin"):
+            logger.debug("No remote 'origin' configured; skipping push")
+            return
+        try:
+            self._run_git("push", "--all", "origin")
+        except Exception as exc:
+            logger.error(f"Failed to push branches to origin: {exc}")
+            raise
+
+    def configure_remote(self, remote_url: str, remote_name: str = "origin"):
+        """Ensure a remote is set up for pushing updates."""
+        self.init_repo()
+        if not remote_url:
+            logger.warning("Remote URL is empty; skipping remote configuration")
+            return
+        try:
+            if self._has_remote(remote_name):
+                self._run_git("remote", "set-url", remote_name, remote_url)
+            else:
+                self._run_git("remote", "add", remote_name, remote_url)
+            logger.info(f"Configured remote '{remote_name}' -> {remote_url}")
+        except Exception as exc:
+            logger.error(f"Failed to configure remote '{remote_name}': {exc}")
+            raise
+
+    # ------------------------------------------------------------------
+    # Validation utilities reused by daemon
+    # ------------------------------------------------------------------
     def validate_changes(self, workspace: Path, files: List[str]) -> Tuple[bool, str]:
-        """Validate changes before committing
-
-        Args:
-            workspace: Workspace path
-            files: List of files to validate
-
-        Returns:
-            Tuple of (is_valid, error_message)
-        """
-        issues = []
+        """Validate a set of files before committing."""
+        issues: List[str] = []
 
         for file in files:
             file_path = workspace / file
 
-            # Check for secrets
             if self._contains_secrets(file_path):
                 issues.append(f"Potential secret in {file}")
 
-            # Check for syntax errors
-            if file.endswith(".py"):
-                if not self._validate_python_syntax(file_path):
-                    issues.append(f"Python syntax error in {file}")
+            if file.endswith(".py") and not self._validate_python_syntax(file_path):
+                issues.append(f"Python syntax error in {file}")
 
         if issues:
             return False, "\n".join(issues)
-
         return True, "OK"
 
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+    def _run_git(self, *args: str) -> str:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=self.repo_path,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "git command failed")
+        return result.stdout.strip()
+
+    def _repo_exists(self) -> bool:
+        return (self.repo_path / ".git").exists()
+
+    def _has_commits(self) -> bool:
+        try:
+            self._run_git("rev-parse", "HEAD")
+            return True
+        except Exception:
+            return False
+
+    def _branch_exists(self, branch: str) -> bool:
+        try:
+            self._run_git("rev-parse", "--verify", branch)
+            return True
+        except Exception:
+            return False
+
+    def _checkout(self, branch: str):
+        self._run_git("checkout", branch)
+
+    def _stage(self, files: Iterable[str]):
+        paths = list(files)
+        if not paths:
+            return
+        self._run_git("add", "--", *paths)
+
+    def _commit_if_needed(self, message: str) -> Optional[str]:
+        if not self._has_pending_changes():
+            return None
+        self._run_git("commit", "-m", message)
+        return self._run_git("rev-parse", "HEAD")
+
+    def _has_pending_changes(self) -> bool:
+        status = self._run_git("status", "--porcelain")
+        return bool(status.strip())
+
+    def _fast_forward_with_main(self, branch: str):
+        if branch == self.main_branch:
+            return
+        try:
+            self._run_git("merge", "--ff-only", self.main_branch)
+        except Exception:
+            # If fast-forward fails (branch ahead), ignore – we'll merge later
+            logger.debug(f"Branch '{branch}' not fast-forward from main; continuing")
+
+    def _merge_branch_into_main(self, branch: str):
+        if branch == self.main_branch:
+            return
+
+        self._checkout(self.main_branch)
+        try:
+            self._run_git("merge", "--ff-only", branch)
+            logger.info(f"Merged '{branch}' into {self.main_branch}")
+        except RuntimeError:
+            logger.warning(
+                f"Fast-forward merge failed for '{branch}'. "
+                "Falling back to non fast-forward merge."
+            )
+            self._run_git("merge", "--no-ff", branch, "-m", f"Merge branch '{branch}'")
+
+    def _has_remote(self, name: str) -> bool:
+        try:
+            remotes = self._run_git("remote")
+            return name in remotes.splitlines()
+        except Exception:
+            return False
+
+    def _normalize_files(self, workspace_path: Path, files: Iterable[str]) -> List[str]:
+        normalized: List[str] = []
+        for file in files:
+            source = (workspace_path / file).resolve()
+            try:
+                rel_path = source.relative_to(self.repo_path)
+            except ValueError:
+                logger.warning(
+                    f"Skipping file outside workspace repo: {source}"
+                )
+                continue
+            normalized.append(str(rel_path))
+        return normalized
+
+    # ------------------------------------------------------------------
+    # Simple static validation routines
+    # ------------------------------------------------------------------
     def _contains_secrets(self, file_path: Path) -> bool:
-        """Check if file contains potential secrets"""
         secret_patterns = [
             "PRIVATE_KEY",
             "API_KEY",
@@ -366,17 +260,15 @@ This PR contains automated changes from Sleepless Agent (Claude Code).
             for pattern in secret_patterns:
                 if pattern in content.upper():
                     return True
-        except:
+        except Exception:
             pass
-
         return False
 
     def _validate_python_syntax(self, file_path: Path) -> bool:
-        """Validate Python file syntax"""
         try:
             import ast
-            content = file_path.read_text()
-            ast.parse(content)
+
+            ast.parse(file_path.read_text())
             return True
-        except:
+        except Exception:
             return False

@@ -143,7 +143,7 @@ CLI commands mirror the slash commands:
 Use flags to target alternate storage locations when scripting:
 
 ```bash
-sleepless --db-path ./data/tasks.db --results-path ./data/results status
+sleepless --db-path ./workspace/data/tasks.db --results-path ./workspace/data/results status
 ```
 
 ## Architecture Overview
@@ -206,11 +206,16 @@ sleepless-agent/
 │   ├── config.py           # Config management
 │   ├── results.py          # Result storage
 │   └── __init__.py
-├── data/
-│   ├── tasks.db            # SQLite database
-│   └── results/            # Task output files
-├── workspace/              # Agent working dir
-├── logs/                   # Log files
+├── workspace/              # All persistent data and task workspaces
+│   ├── data/               # Persistent storage
+│   │   ├── tasks.db        # SQLite database
+│   │   ├── results/        # Task output files
+│   │   ├── reports/        # Daily markdown reports
+│   │   ├── agent.log       # Application logs
+│   │   └── metrics.jsonl   # Performance metrics
+│   ├── tasks/              # Task workspaces
+│   ├── projects/           # Project workspaces
+│   └── trash/              # Soft-deleted projects
 ├── config.yaml             # Configuration
 ├── .env                    # Secrets
 ├── requirements.txt        # Python deps
@@ -244,17 +249,17 @@ scheduler:
 
 ### Real-time Logs
 ```bash
-tail -f logs/agent.log
+tail -f workspace/data/agent.log
 ```
 
 ### Database Queries
 ```bash
-sqlite3 data/tasks.db "SELECT * FROM tasks WHERE status='completed' LIMIT 5;"
+sqlite3 workspace/data/tasks.db "SELECT * FROM tasks WHERE status='completed' LIMIT 5;"
 ```
 
 ### Performance History
 ```bash
-tail -100 logs/metrics.jsonl | jq .
+tail -100 workspace/data/metrics.jsonl | jq .
 ```
 
 ### Check Health
@@ -330,7 +335,7 @@ cat .env | grep -E "SLACK|ANTHROPIC"
 pgrep -f "sleepless_agent.daemon"
 
 # 3. Logs
-tail -50 logs/agent.log | grep ERROR
+tail -50 workspace/data/agent.log | grep ERROR
 
 # 4. Socket Mode enabled in Slack app
 # Settings > Socket Mode > Check toggle
@@ -399,7 +404,7 @@ gh auth login
 ## Support
 
 **Issues?**
-- Check logs: `tail -f logs/agent.log`
+- Check logs: `tail -f workspace/data/agent.log`
 - Review config: `cat config.yaml`
 - Test Claude API: `python -c "from anthropic import Anthropic; print('OK')"`
 - Verify Slack: Manually post in workspace

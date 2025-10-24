@@ -169,7 +169,7 @@ class HealthMonitor:
 class PerformanceLogger:
     """Log performance metrics"""
 
-    def __init__(self, log_dir: str = "./logs"):
+    def __init__(self, log_dir: str = "./workspace/data"):
         """Initialize performance logger"""
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)

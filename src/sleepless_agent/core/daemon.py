@@ -1,11 +1,13 @@
 """Main agent daemon - runs continuously"""
 
 import asyncio
+import json
 import signal
 import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Optional
 
 from loguru import logger
 
@@ -34,6 +36,11 @@ class SleepleassAgent:
         self.config = get_config()
         self.running = False
         self.last_daily_summarization = None  # Track last summarization time
+        self.use_remote_repo = False
+        self.remote_repo_url: Optional[str] = None
+
+        # Interactive setup on first launch
+        self._ensure_first_time_setup()
 
         # Initialize components
         self._init_directories()
@@ -74,13 +81,17 @@ class SleepleassAgent:
         )
         self.git = GitManager(workspace_root=str(self.config.agent.workspace_root))
         self.git.init_repo()
-        self.git.create_random_ideas_branch()
+        if self.use_remote_repo and self.remote_repo_url:
+            try:
+                self.git.configure_remote(self.remote_repo_url)
+            except Exception as exc:
+                logger.error(f"Failed to configure remote repository: {exc}")
 
         self.monitor = HealthMonitor(
             db_path=str(self.config.agent.db_path),
             results_path=str(self.config.agent.results_path),
         )
-        self.perf_logger = PerformanceLogger(log_dir="./logs")
+        self.perf_logger = PerformanceLogger(log_dir=str(self.config.agent.db_path.parent))
         self.report_generator = ReportGenerator(base_path=str(self.config.agent.db_path.parent / "reports"))
 
         self.bot = SlackBot(
@@ -96,12 +107,71 @@ class SleepleassAgent:
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
 
+    def _ensure_first_time_setup(self):
+        """Run interactive setup for workspace and remote configuration."""
+        state_path = Path.home() / ".sleepless_agent_setup.json"
+        default_workspace = self.config.agent.workspace_root.expanduser().resolve()
+        setup_data = {}
+
+        if state_path.exists():
+            try:
+                setup_data = json.loads(state_path.read_text())
+                logger.info(f"Loaded existing setup from {state_path}")
+            except Exception as exc:
+                logger.warning(f"Failed to parse setup file {state_path}: {exc}")
+
+        if not setup_data:
+            # Workspace prompt
+            print("\nWelcome to Sleepless Agent! Let's finish the initial setup.")
+            workspace_input = input(f"Workspace root [{default_workspace}]: ").strip()
+            workspace_root = Path(workspace_input).expanduser().resolve() if workspace_input else default_workspace
+
+            # Remote prompt
+            use_remote_input = input("Use remote GitHub repo to track? [y/N]: ").strip().lower()
+            use_remote_repo = use_remote_input in {"y", "yes"}
+
+            remote_repo_url = None
+            if use_remote_repo:
+                default_remote = "git@github.com:username/sleepless-agent.git"
+                remote_repo_input = input(f"Remote repository URL [{default_remote}]: ").strip()
+                remote_repo_url = remote_repo_input or default_remote
+
+            setup_data = {
+                "workspace_root": str(workspace_root),
+                "use_remote_repo": use_remote_repo,
+                "remote_repo_url": remote_repo_url,
+            }
+
+            try:
+                state_path.write_text(json.dumps(setup_data, indent=2))
+                logger.info(f"Saved setup configuration to {state_path}")
+            except Exception as exc:
+                logger.warning(f"Failed to write setup file {state_path}: {exc}")
+        else:
+            workspace_root = Path(setup_data.get("workspace_root", default_workspace))
+            use_remote_repo = setup_data.get("use_remote_repo", False)
+            remote_repo_url = setup_data.get("remote_repo_url")
+
+        self._apply_workspace_root(Path(workspace_root))
+        self.use_remote_repo = bool(use_remote_repo)
+        self.remote_repo_url = remote_repo_url
+
+    def _apply_workspace_root(self, workspace_root: Path):
+        """Update config paths to use a new workspace root."""
+        workspace_root = workspace_root.expanduser().resolve()
+        data_dir = workspace_root / "data"
+
+        self.config.agent.workspace_root = workspace_root
+        self.config.agent.shared_workspace = workspace_root / "shared"
+        self.config.agent.db_path = data_dir / "tasks.db"
+        self.config.agent.results_path = data_dir / "results"
+
     def _init_directories(self):
         """Initialize required directories"""
         self.config.agent.workspace_root.mkdir(parents=True, exist_ok=True)
         self.config.agent.shared_workspace.mkdir(parents=True, exist_ok=True)
         self.config.agent.results_path.mkdir(parents=True, exist_ok=True)
-        Path("./logs").mkdir(parents=True, exist_ok=True)
+        self.config.agent.db_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _signal_handler(self, sig, _frame):
         """Handle shutdown signals"""
@@ -200,53 +270,46 @@ class SleepleassAgent:
             # Handle git operations based on priority
             git_commit_sha = None
             git_pr_url = None
-            git_branch = None
+            git_branch = self._get_branch_for_task(task)
 
             # Get task workspace
-            task_workspace = self.claude.get_workspace_path(task.id)
+            task_workspace = self.claude.get_workspace_path(task.id, task.project_id)
 
-            if task.priority == TaskPriority.RANDOM:
-                # Auto-commit random thoughts from workspace to main repo
-                git_commit_sha = self.git.commit_random_thought(
-                    task_id=task.id,
-                    task_workspace=task_workspace,
-                    description=task.description,
-                    result_content=result_output,
-                )
+            if task_workspace and task_workspace.exists():
+                files_to_commit = list(files_modified)
 
-                # Clean up workspace if configured
-                if self.config.claude_code.cleanup_random_workspaces:
-                    try:
-                        self.claude.cleanup_workspace(task.id, force=True)
-                        logger.info(f"Cleaned up workspace for task {task.id}")
-                    except Exception as e:
-                        logger.warning(f"Failed to cleanup workspace for task {task.id}: {e}")
+                if task.priority in (TaskPriority.RANDOM, TaskPriority.GENERATED):
+                    if not files_to_commit:
+                        summary_rel_path = self._write_task_summary(task, task_workspace, result_output)
+                        if summary_rel_path:
+                            files_to_commit.append(summary_rel_path)
 
-            elif task.priority == TaskPriority.SERIOUS and files_modified:
-                # For serious tasks, workspace already has git repo
-                # Validate and commit within workspace
-                is_valid, validation_msg = self.git.validate_changes(
-                    task_workspace, files_modified
-                )
-
-                if is_valid:
-                    git_branch = f"task-{task.id}"
-                    git_commit_sha = self.git.commit_in_workspace(
-                        workspace=task_workspace,
-                        files=files_modified,
-                        message=f"Implement task: {task.description[:60]}",
-                    )
-
-                    # Create PR from workspace
-                    if git_commit_sha:
-                        git_pr_url = self.git.create_pr_from_workspace(
-                            task_workspace=task_workspace,
-                            task_id=task.id,
-                            task_description=task.description,
+                    if files_to_commit:
+                        commit_message = f"Capture thought: #{task.id} {task.description[:60]}"
+                        git_commit_sha = self.git.commit_workspace_changes(
                             branch=git_branch,
+                            workspace_path=task_workspace,
+                            files=files_to_commit,
+                            message=commit_message,
                         )
-                else:
-                    logger.warning(f"Validation failed for task {task.id}: {validation_msg}")
+                    else:
+                        logger.info(f"Task {task.id} produced no files to commit")
+
+                elif task.priority == TaskPriority.SERIOUS and files_to_commit:
+                    is_valid, validation_msg = self.git.validate_changes(task_workspace, files_to_commit)
+
+                    if is_valid:
+                        commit_message = f"Implement task #{task.id}: {task.description[:60]}"
+                        git_commit_sha = self.git.commit_workspace_changes(
+                            branch=git_branch,
+                            workspace_path=task_workspace,
+                            files=files_to_commit,
+                            message=commit_message,
+                        )
+                    else:
+                        logger.warning(f"Validation failed for task {task.id}: {validation_msg}")
+            else:
+                logger.warning(f"No workspace found for task {task.id}; skipping git operations")
 
             # Save result
             result = self.results.save_result(
@@ -312,7 +375,12 @@ class SleepleassAgent:
 
             # Notify user via Slack if assigned
             if task.assigned_to:
-                priority_icon = "🔴" if task.priority.value == "serious" else "🟡"
+                if task.priority == TaskPriority.SERIOUS:
+                    priority_icon = "🔴"
+                elif task.priority == TaskPriority.RANDOM:
+                    priority_icon = "🟡"
+                else:
+                    priority_icon = "🟢"
                 files_info = f"\n📝 Files modified: {len(files_modified)}" if files_modified else ""
                 commands_info = f"\n⚙️ Commands: {len(commands_executed)}" if commands_executed else ""
                 git_info = ""
@@ -338,6 +406,68 @@ class SleepleassAgent:
             logger.info(f"Task {task.id} completed successfully")
 
         except Exception as e:
+            # Handle PauseException specially (don't mark as failed)
+            from sleepless_agent.exceptions import PauseException
+
+            if isinstance(e, PauseException):
+                logger.warning(
+                    f"Pro plan usage limit reached during task {task.id}: "
+                    f"{e.current_usage}/{e.usage_limit} ({e.percent_used:.1f}%)"
+                )
+                logger.info(f"Task {task.id} completed - pausing execution")
+                logger.info(f"Usage will reset at {e.reset_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+                # Mark task as completed (it finished successfully, just pausing now)
+                try:
+                    # Save minimal result
+                    result = self.results.save_result(
+                        task_id=task.id,
+                        output=result_output if 'result_output' in locals() else "[Task completed before pause]",
+                        files_modified=files_modified if 'files_modified' in locals() else [],
+                        commands_executed=commands_executed if 'commands_executed' in locals() else [],
+                        processing_time_seconds=int(time.time() - start_time) if 'start_time' in locals() else 0,
+                        git_commit_sha=None,
+                        git_pr_url=None,
+                        git_branch=None,
+                        workspace_path=str(task_workspace) if 'task_workspace' in locals() else "",
+                    )
+                    self.task_queue.mark_completed(task.id, result_id=result.id)
+                except Exception as save_error:
+                    logger.warning(f"Failed to save result before pause: {save_error}")
+
+                # Calculate sleep time
+                now = datetime.utcnow()
+                sleep_seconds = max(0, (e.reset_time - now).total_seconds())
+
+                logger.critical(
+                    f"⏸️  Pausing execution for {sleep_seconds / 60:.1f} minutes "
+                    f"(until {e.reset_time.strftime('%H:%M:%S')})"
+                )
+
+                # Send Slack notification
+                if task.assigned_to:
+                    self.bot.send_message(
+                        task.assigned_to,
+                        f"⏸️  Pro plan usage limit reached ({e.percent_used:.0f}%)\n"
+                        f"Task #{task.id} completed successfully\n"
+                        f"Pausing execution until {e.reset_time.strftime('%H:%M:%S')}\n"
+                        f"Will resume automatically in ~{sleep_seconds / 60:.0f} minutes",
+                    )
+
+                # Sleep until reset
+                if sleep_seconds > 0:
+                    logger.info(f"Sleeping until {e.reset_time.strftime('%H:%M:%S')}...")
+                    await asyncio.sleep(sleep_seconds)
+
+                logger.info("⏸️  Usage limit reset - resuming task processing")
+
+                # Send resume notification
+                if task.assigned_to:
+                    self.bot.send_message(task.assigned_to, "▶️  Pro plan usage limit reset - resuming tasks")
+
+                return
+
+            # General exception handling
             logger.error(f"Failed to execute task {task.id}: {e}")
             self.task_queue.mark_failed(task.id, str(e))
 
@@ -371,6 +501,36 @@ class SleepleassAgent:
             # Notify user
             if task.assigned_to:
                 self.bot.send_message(task.assigned_to, f"❌ Task #{task.id} failed: {str(e)}")
+
+    def _get_branch_for_task(self, task) -> str:
+        """Determine branch name for a task."""
+        if task.project_id:
+            return f"project/{task.project_id}"
+        return self.git.default_task_branch
+
+    def _write_task_summary(self, task, workspace_path: Path, result_output: str) -> Optional[str]:
+        """Create a lightweight summary file for random/generated tasks."""
+        try:
+            workspace_path.mkdir(parents=True, exist_ok=True)
+            summary_path = workspace_path / f"task_{task.id}_summary.md"
+
+            output_limit = 2000
+            truncated_output = result_output[:output_limit]
+            if len(result_output) > output_limit:
+                truncated_output += "\n\n[output truncated for summary]"
+
+            summary_content = (
+                f"# Task #{task.id} Summary\n\n"
+                f"**When**: {datetime.utcnow().isoformat()} UTC\n"
+                f"**Priority**: {task.priority.value}\n"
+                f"**Description**: {task.description}\n\n"
+                f"## Output\n\n{truncated_output}\n"
+            )
+            summary_path.write_text(summary_content)
+            return summary_path.relative_to(workspace_path).as_posix()
+        except Exception as exc:
+            logger.warning(f"Failed to write summary for task {task.id}: {exc}")
+            return None
 
     def _check_and_summarize_daily_reports(self):
         """Check if it's end of day and summarize reports"""

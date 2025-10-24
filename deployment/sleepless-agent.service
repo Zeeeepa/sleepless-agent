@@ -19,7 +19,7 @@ EnvironmentFile=/opt/sleepless-agent/.env
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/sleepless-agent/data /opt/sleepless-agent/logs /opt/sleepless-agent/workspace
+ReadWritePaths=/opt/sleepless-agent/workspace
 
 [Install]
 WantedBy=multi-user.target

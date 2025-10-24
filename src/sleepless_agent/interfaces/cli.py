@@ -95,7 +95,12 @@ def command_task(ctx: CLIContext, description: str, priority: TaskPriority, proj
         project_id=project_id,
         project_name=final_project_name,
     )
-    label = "Serious" if priority == TaskPriority.SERIOUS else "Thought"
+    if priority == TaskPriority.SERIOUS:
+        label = "Serious"
+    elif priority == TaskPriority.RANDOM:
+        label = "Thought"
+    else:
+        label = "Generated"
     project_info = f" [Project: {final_project_name}]" if final_project_name else ""
     print(f"{label} task #{task.id} queued{project_info}:\n{description}")
     return 0
@@ -251,7 +256,7 @@ def command_cancel(ctx: CLIContext, identifier: str | int) -> int:
         print(f"Moved {count} task(s) to trash in database")
 
         # Move workspace directory to trash
-        workspace_path = Path("workspace") / f"project_{project_id}"
+        workspace_path = Path("workspace") / "projects" / project_id
         if workspace_path.exists():
             trash_dir = Path("workspace") / "trash"
             trash_dir.mkdir(parents=True, exist_ok=True)
@@ -352,7 +357,7 @@ def command_trash(ctx: CLIContext, subcommand: Optional[str] = None, identifier:
         project_id = "_".join(parts[1:-2])  # Remove "project" prefix and timestamp parts
 
         # Restore workspace
-        workspace_path = Path("workspace") / f"project_{project_id}"
+        workspace_path = Path("workspace") / "projects" / project_id
         if workspace_path.exists():
             print(f"Workspace already exists at {workspace_path}", file=sys.stderr)
             response = input("Overwrite? (y/N): ").strip().lower()

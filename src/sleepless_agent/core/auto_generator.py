@@ -132,8 +132,8 @@ class AutoTaskGenerator:
         if not task_desc:
             return None
 
-        # Determine priority based on config ratio
-        priority = TaskPriority.RANDOM if random.random() < self.config.random_ratio else TaskPriority.SERIOUS
+        # Determine priority: mostly low-priority generated work unless escalated
+        priority = TaskPriority.GENERATED if random.random() < self.config.random_ratio else TaskPriority.SERIOUS
 
         # Create task in database
         task = Task(

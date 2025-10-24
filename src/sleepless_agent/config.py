@@ -27,6 +27,51 @@ class ClaudeCodeConfig(BaseSettings):
     preserve_serious_workspaces: bool = True  # Keep serious task workspaces for debugging
 
 
+class MultiAgentPhaseConfig(BaseSettings):
+    """Configuration for a single execution phase"""
+    enabled: bool = True
+    max_turns: int = 10
+    timeout_seconds: int = 300
+
+
+class MultiAgentReadmeConfig(BaseSettings):
+    """Configuration for README management"""
+    auto_create: bool = True
+    auto_update: bool = True
+    preserve_history: bool = True
+
+
+class MultiAgentPlanConfig(BaseSettings):
+    """Configuration for PLAN.md management"""
+    auto_create: bool = True
+    preserve_plan: bool = True
+    include_context: bool = True
+
+
+class ProPlanMonitoringConfig(BaseSettings):
+    """Pro plan usage monitoring configuration"""
+    enabled: bool = True
+    pause_threshold: float = 85.0  # Pause at 85% of usage limit
+    usage_command: str = "claude /usage"  # CLI command to check usage
+    check_frequency: str = "after_task"  # When to check: after_task | before_task | both
+
+    # Auto-generation settings
+    auto_generate_refinements: bool = True  # Generate tasks for incomplete work
+    low_usage_threshold: float = 60.0  # Generate when usage < 60%
+    max_auto_tasks_per_session: int = 3  # Limit auto-generated tasks
+
+
+class MultiAgentWorkflowConfig(BaseSettings):
+    """Multi-agent workflow configuration"""
+    enabled: bool = True
+    planner: MultiAgentPhaseConfig = Field(default_factory=lambda: MultiAgentPhaseConfig(max_turns=10, timeout_seconds=300))
+    worker: MultiAgentPhaseConfig = Field(default_factory=lambda: MultiAgentPhaseConfig(max_turns=30, timeout_seconds=1800))
+    evaluator: MultiAgentPhaseConfig = Field(default_factory=lambda: MultiAgentPhaseConfig(max_turns=10, timeout_seconds=300))
+    readme: MultiAgentReadmeConfig = Field(default_factory=MultiAgentReadmeConfig)
+    plan: MultiAgentPlanConfig = Field(default_factory=MultiAgentPlanConfig)
+    pro_plan_monitoring: ProPlanMonitoringConfig = Field(default_factory=ProPlanMonitoringConfig)
+
+
 class AutoGenerationConfig(BaseSettings):
     """Auto-task generation configuration"""
     enabled: bool = True  # Enable automatic task generation
@@ -44,16 +89,16 @@ class AutoGenerationConfig(BaseSettings):
     }
 
     # Task type distribution
-    random_ratio: float = 0.6  # 60% RANDOM tasks, 40% SERIOUS
+    random_ratio: float = 0.6  # Fraction of auto-generated tasks kept low priority vs escalated to SERIOUS
 
 
 class AgentConfig(BaseSettings):
     """Agent configuration"""
     workspace_root: Path = Path("./workspace")  # Root for isolated task workspaces
     shared_workspace: Path = Path("./workspace/shared")  # Optional shared resources
-    db_path: Path = Path("./data/tasks.db")
-    results_path: Path = Path("./data/results")
-    max_parallel_tasks: int = 3
+    db_path: Path = Path("./workspace/data/tasks.db")
+    results_path: Path = Path("./workspace/data/results")
+    max_parallel_tasks: int = 1
     task_timeout_seconds: int = 3600
 
 
@@ -63,6 +108,7 @@ class Config(BaseSettings):
     claude_code: ClaudeCodeConfig
     agent: AgentConfig
     auto_generation: AutoGenerationConfig
+    multi_agent_workflow: MultiAgentWorkflowConfig = Field(default_factory=MultiAgentWorkflowConfig)
 
     class Config:
         env_nested_delimiter = "__"
@@ -72,12 +118,14 @@ class Config(BaseSettings):
         claude_code_config = ClaudeCodeConfig()
         agent_config = AgentConfig()
         auto_generation_config = AutoGenerationConfig()
+        multi_agent_workflow_config = MultiAgentWorkflowConfig()
 
         super().__init__(
             slack=slack_config,
             claude_code=claude_code_config,
             agent=agent_config,
             auto_generation=auto_generation_config,
+            multi_agent_workflow=multi_agent_workflow_config,
             **data
         )
 

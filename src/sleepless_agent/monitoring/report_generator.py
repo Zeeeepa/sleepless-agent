@@ -27,42 +27,28 @@ class TaskMetrics:
 class ReportGenerator:
     """Generate daily reports with real-time appending and end-of-day summarization"""
 
-    def __init__(self, base_path: str = "./data/reports"):
+    def __init__(self, base_path: str = "./workspace/data/reports"):
         """Initialize report generator
 
         Args:
-            base_path: Root directory for all reports
+            base_path: Root directory for daily reports
         """
         self.base_path = Path(base_path)
-        self.daily_dir = self.base_path / "daily"
-        self.projects_dir = self.base_path / "projects"
-        self.recent_dir = self.base_path / "recent"
+        self.base_path.mkdir(parents=True, exist_ok=True)
 
-        # Create directories
-        self.daily_dir.mkdir(parents=True, exist_ok=True)
-        self.projects_dir.mkdir(parents=True, exist_ok=True)
-        self.recent_dir.mkdir(parents=True, exist_ok=True)
-
-    def append_task_completion(self, task_metrics: TaskMetrics, project_id: Optional[str] = None):
-        """Append task completion entry to daily report and optional project report
+    def append_task_completion(self, task_metrics: TaskMetrics):
+        """Append task completion entry to daily report
 
         Args:
             task_metrics: Task metrics to append
-            project_id: Optional project ID to also append to project report
         """
         timestamp = task_metrics.timestamp or datetime.utcnow().isoformat()
-
-        # Append to daily report
         self._append_to_daily_report(task_metrics, timestamp)
-
-        # Append to project report if provided
-        if project_id:
-            self._append_to_project_report(project_id, task_metrics, timestamp)
 
     def _append_to_daily_report(self, task_metrics: TaskMetrics, timestamp: str):
         """Append entry to today's daily report"""
         today = datetime.utcnow().strftime("%Y-%m-%d")
-        report_file = self.daily_dir / f"{today}.md"
+        report_file = self.base_path / f"{today}.md"
 
         # Ensure header exists
         self._ensure_daily_report_header(report_file, today)
@@ -84,35 +70,6 @@ class ReportGenerator:
             report_file.write_text(new_content)
         except Exception as e:
             logger.error(f"Failed to append to daily report: {e}")
-
-    def _append_to_project_report(self, project_id: str, task_metrics: TaskMetrics, timestamp: str):
-        """Append entry to project report"""
-        report_file = self.projects_dir / f"{project_id}.md"
-
-        # Ensure header exists
-        if not report_file.exists():
-            header = f"# Project Report: {project_id}\n\n"
-            header += f"Created: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
-            header += "## Tasks\n\n"
-            header += "## Summary\n\n"
-            report_file.write_text(header)
-
-        # Format and append entry
-        status_emoji = "✓" if task_metrics.status == "completed" else "✗"
-        entry = self._format_task_entry(task_metrics, status_emoji, timestamp)
-
-        try:
-            content = report_file.read_text()
-            # Find summary section and insert before it
-            summary_idx = content.find("\n## Summary")
-            if summary_idx != -1:
-                new_content = content[:summary_idx] + f"\n{entry}" + content[summary_idx:]
-            else:
-                new_content = content + f"\n{entry}"
-
-            report_file.write_text(new_content)
-        except Exception as e:
-            logger.error(f"Failed to append to project report: {e}")
 
     def _format_task_entry(self, task_metrics: TaskMetrics, status_emoji: str, timestamp: str) -> str:
         """Format task entry for markdown"""
@@ -170,41 +127,6 @@ class ReportGenerator:
 
         except Exception as e:
             logger.error(f"Failed to summarize report: {e}")
-
-    def summarize_project_report(self, project_id: str):
-        """Generate end-of-day summary for project report
-
-        Args:
-            project_id: Project ID
-        """
-        report_file = self.projects_dir / f"{project_id}.md"
-        if not report_file.exists():
-            logger.warning(f"Project report not found: {report_file}")
-            return
-
-        try:
-            content = report_file.read_text()
-            summary = self._extract_summary_stats(content)
-
-            # Update summary section
-            summary_text = self._format_summary(summary, f"Project: {project_id}")
-
-            # Replace or add summary section
-            summary_idx = content.find("## Summary")
-            if summary_idx != -1:
-                next_section = content.find("\n##", summary_idx + 1)
-                if next_section != -1:
-                    new_content = content[:summary_idx] + summary_text + content[next_section:]
-                else:
-                    new_content = content[:summary_idx] + summary_text
-            else:
-                new_content = content + "\n" + summary_text
-
-            report_file.write_text(new_content)
-            logger.info(f"Summarized project report: {project_id}")
-
-        except Exception as e:
-            logger.error(f"Failed to summarize project report: {e}")
 
     def _extract_summary_stats(self, content: str) -> Dict:
         """Extract statistics from report content"""
@@ -293,24 +215,9 @@ class ReportGenerator:
         if not date:
             date = datetime.utcnow().strftime("%Y-%m-%d")
 
-        report_file = self.daily_dir / f"{date}.md"
+        report_file = self.base_path / f"{date}.md"
         if not report_file.exists():
             return f"No report found for {date}"
-
-        return report_file.read_text()
-
-    def get_project_report(self, project_id: str) -> str:
-        """Get project report content
-
-        Args:
-            project_id: Project ID
-
-        Returns:
-            Report content as markdown string
-        """
-        report_file = self.projects_dir / f"{project_id}.md"
-        if not report_file.exists():
-            return f"No report found for project {project_id}"
 
         return report_file.read_text()
 
@@ -320,29 +227,8 @@ class ReportGenerator:
         Returns:
             List of report dates in YYYY-MM-DD format, sorted newest first
         """
-        reports = sorted([f.stem for f in self.daily_dir.glob("*.md")], reverse=True)
+        reports = sorted([f.stem for f in self.base_path.glob("*.md")], reverse=True)
         return reports
-
-    def list_project_reports(self) -> List[str]:
-        """List all available project reports
-
-        Returns:
-            List of project IDs
-        """
-        return sorted([f.stem for f in self.projects_dir.glob("*.md")])
-
-    def update_recent_reports(self):
-        """Update recent report cache (today, yesterday, this week)"""
-        today = datetime.utcnow().strftime("%Y-%m-%d")
-        today_report = self.get_daily_report(today)
-        (self.recent_dir / "today.md").write_text(today_report)
-
-        # Yesterday
-        yesterday = (datetime.utcnow().fromordinal(datetime.utcnow().toordinal() - 1)).strftime("%Y-%m-%d")
-        yesterday_report = self.get_daily_report(yesterday)
-        (self.recent_dir / "yesterday.md").write_text(yesterday_report)
-
-        logger.debug("Updated recent reports cache")
 
     def cleanup_old_reports(self, days: int = 30):
         """Clean up reports older than specified days
@@ -352,7 +238,7 @@ class ReportGenerator:
         """
         cutoff = datetime.utcnow().toordinal() - days
 
-        for report_file in self.daily_dir.glob("*.md"):
+        for report_file in self.base_path.glob("*.md"):
             try:
                 date_str = report_file.stem
                 report_date = datetime.strptime(date_str, "%Y-%m-%d").toordinal()
