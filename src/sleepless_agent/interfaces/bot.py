@@ -86,7 +86,7 @@ class SlackBot:
         elif command == "/think":
             self.handle_think_command(text, user, channel, response_url)
         elif command == "/check":
-            self.handle_status_command(response_url)
+            self.handle_check_command(response_url)
         elif command == "/cancel":
             self.handle_cancel_command(text, response_url)
         elif command == "/report":
@@ -200,7 +200,7 @@ class SlackBot:
             self.send_response(response_url, f"Failed to add task: {str(e)}")
             logger.error(f"Failed to add task: {e}")
 
-    def handle_status_command(self, response_url: str):
+    def handle_check_command(self, response_url: str):
         """Handle /check command - comprehensive system status"""
         try:
             # System health

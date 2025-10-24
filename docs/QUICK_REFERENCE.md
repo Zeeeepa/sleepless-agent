@@ -20,7 +20,7 @@ Run `python -m sleepless_agent.interfaces.cli` (or the `sleepless` script after 
 |---------|---------|---------|
 | `task <description>` | Queue a serious task | `task "Refactor auth flow"` |
 | `think <description>` | Record a random thought | `think "Experiment with async"` |
-| `status` | Show system health, queue, and performance metrics | `status` |
+| `check` | Show system health, queue, and performance metrics | `check` |
 | `report [identifier]` | Show task details, daily reports, or project summaries (`--list` to browse reports) | `report 12` |
 | `cancel <identifier>` | Move a task or project to trash | `cancel 12` or `cancel my-app` |
 | `trash [subcommand] [identifier]` | Manage trash (list, restore, empty) | `trash restore my-app` |
@@ -171,7 +171,7 @@ The agent tracks:
 - Database health
 - Uptime and operational statistics
 
-View with: `sleepless status` or `tail workspace/data/metrics.jsonl`
+View with: `sleepless check` or `tail workspace/data/metrics.jsonl`
 
 ## Tools Available to Claude
 
@@ -231,7 +231,7 @@ DEBUG=false
 2. **Batch serious jobs** - Reduces context switching
 3. **Monitor credits** - Watch scheduler logs for window resets
 4. **Review git history** - Check `random-ideas` branch regularly
-5. **Check metrics** - Run `sleepless status` to track performance
+5. **Check metrics** - Run `sleepless check` to track performance
 
 ## Security Notes
 
@@ -248,7 +248,7 @@ DEBUG=false
 3. Run: `sleepless daemon`
 4. Test commands in Slack
 5. Deploy as service using Makefile
-6. Monitor with `sleepless status` and `sleepless report --list` (or `/check` and `/report --list` in Slack)
+6. Monitor with `sleepless check` and `sleepless report --list` (or `/check` and `/report --list` in Slack)
 
 ---
 
