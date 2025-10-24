@@ -22,6 +22,7 @@ class GitManager:
         self.repo_path = Path(workspace_root).resolve()
         self.default_task_branch = default_task_branch
         self.main_branch = main_branch
+        self._push_warning_logged = False
 
     # ------------------------------------------------------------------
     # Repository bootstrap
@@ -107,6 +108,28 @@ class GitManager:
             return
         try:
             self._run_git("push", "--all", "origin")
+            if self._push_warning_logged:
+                logger.info("Git push to origin succeeded after previous failures.")
+                self._push_warning_logged = False
+        except RuntimeError as exc:
+            message = str(exc)
+            if (
+                "Repository not found" in message
+                or "Could not read from remote repository" in message
+            ):
+                if not self._push_warning_logged:
+                    logger.warning(
+                        "Push failed because remote repository is unavailable or access is denied. "
+                        "Continuing without pushing; verify your remote configuration if pushes are required."
+                    )
+                    self._push_warning_logged = True
+                else:
+                    logger.debug(
+                        "Skipping repeated push warning; remote repository still unreachable."
+                    )
+                return
+            logger.error(f"Failed to push branches to origin: {exc}")
+            raise
         except Exception as exc:
             logger.error(f"Failed to push branches to origin: {exc}")
             raise

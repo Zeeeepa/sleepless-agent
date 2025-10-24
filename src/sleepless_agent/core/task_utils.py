@@ -41,3 +41,26 @@ def parse_task_description(description: str) -> Tuple[str, Optional[str], Option
 
     return working, project_name, note
 
+
+def prepare_task_creation(
+    description: str,
+    project_override: Optional[str] = None,
+) -> Tuple[str, Optional[str], Optional[str], Optional[str]]:
+    """Normalize task input and derive project metadata.
+
+    Args:
+        description: Raw task description (may include flags).
+        project_override: Project name provided via CLI flag or Slack command.
+
+    Returns:
+        tuple of (
+            cleaned_description,
+            final_project_name,
+            project_id,
+            note,
+        )
+    """
+    cleaned, parsed_project, note = parse_task_description(description)
+    final_project = project_override or parsed_project
+    project_id = slugify_project(final_project) if final_project else None
+    return cleaned, final_project, project_id, note

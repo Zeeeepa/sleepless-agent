@@ -1,12 +1,13 @@
 """Main agent daemon - runs continuously"""
 
 import asyncio
+import os
 import signal
 import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Set, List
 
 from loguru import logger
 
@@ -67,6 +68,9 @@ class SleepleassAgent:
             max_parallel_tasks=self.config.agent.max_parallel_tasks,
             daily_budget_usd=10.0,  # TODO: make configurable
             night_quota_percent=90.0,  # 90% for night, 10% for day
+            use_live_usage_check=self.config.multi_agent_workflow.pro_plan_monitoring.enabled,
+            usage_command=self.config.multi_agent_workflow.pro_plan_monitoring.usage_command,
+            pause_threshold_percent=self.config.multi_agent_workflow.pro_plan_monitoring.pause_threshold,
         )
 
         self.auto_generator = AutoTaskGenerator(
@@ -149,7 +153,7 @@ class SleepleassAgent:
 
                 # Check and generate tasks if usage is low
                 try:
-                    self.auto_generator.check_and_generate()
+                    await self.auto_generator.check_and_generate()
                 except Exception as e:
                     logger.error(f"Error in auto-generation: {e}")
 
@@ -173,9 +177,87 @@ class SleepleassAgent:
             self.bot.stop()
             logger.info("Sleepless Agent stopped")
 
+    def _enforce_task_timeouts(self):
+        """Mark long-running tasks as timed out and record their failure."""
+        timeout_seconds = self.config.agent.task_timeout_seconds
+        if timeout_seconds <= 0:
+            return
+
+        timed_out_tasks = self.task_queue.timeout_expired_tasks(timeout_seconds)
+        if not timed_out_tasks:
+            return
+
+        now = datetime.utcnow()
+        for task in timed_out_tasks:
+            started_at = task.started_at or now
+            completed_at = task.completed_at or now
+            elapsed_seconds = int((completed_at - started_at).total_seconds())
+            elapsed_seconds = max(elapsed_seconds, timeout_seconds)
+            timeout_message = task.error_message or f"Timed out after {elapsed_seconds // 60} minutes."
+
+            cleanup_note = "workspace left in place"
+            try:
+                cleaned = self.claude.cleanup_workspace(task.id, force=False)
+                if cleaned:
+                    cleanup_note = "workspace cleaned"
+            except Exception as exc:
+                cleanup_note = "workspace cleanup failed"
+                logger.debug(f"Failed to cleanup workspace for task {task.id}: {exc}")
+
+            logger.warning(f"Task {task.id} timed out after {elapsed_seconds}s ({cleanup_note})")
+
+            try:
+                self.monitor.record_task_completion(elapsed_seconds, success=False)
+            except Exception as exc:
+                logger.debug(f"Failed to record timeout in health monitor for task {task.id}: {exc}")
+
+            try:
+                self.perf_logger.log_task_execution(
+                    task_id=task.id,
+                    description=task.description,
+                    priority=task.priority.value if task.priority else "unknown",
+                    duration_seconds=elapsed_seconds,
+                    success=False,
+                )
+            except Exception as exc:
+                logger.debug(f"Failed to log timeout metrics for task {task.id}: {exc}")
+
+            try:
+                task_metrics = TaskMetrics(
+                    task_id=task.id,
+                    description=task.description,
+                    priority=task.priority.value if task.priority else "unknown",
+                    status="failed",
+                    duration_seconds=elapsed_seconds,
+                    files_modified=0,
+                    commands_executed=0,
+                    error_message=timeout_message,
+                )
+                self.report_generator.append_task_completion(task_metrics, project_id=task.project_id)
+            except Exception as exc:
+                logger.debug(f"Failed to append timeout to report for task {task.id}: {exc}")
+
+            if task.assigned_to and getattr(self, "bot", None):
+                try:
+                    minutes = max(1, elapsed_seconds // 60)
+                    self.bot.send_message(
+                        task.assigned_to,
+                        f"⏱️ Task #{task.id} timed out after {minutes} minute(s). "
+                        "It has been marked as failed.",
+                    )
+                except Exception as exc:
+                    logger.debug(f"Failed to send timeout notification for task {task.id}: {exc}")
+
+            if self.live_status_tracker:
+                try:
+                    self.live_status_tracker.clear(task.id)
+                except Exception as exc:
+                    logger.debug(f"Failed to clear live status for timed-out task {task.id}: {exc}")
+
     async def _process_tasks(self):
         """Process pending tasks using smart scheduler"""
         try:
+            self._enforce_task_timeouts()
             # Get next tasks to execute
             tasks_to_execute = self.scheduler.get_next_tasks()
 
@@ -192,24 +274,47 @@ class SleepleassAgent:
 
     async def _execute_task(self, task):
         """Execute a single task"""
+        separator = "=" * 72
+        task_summary: Optional[str] = None
         try:
             # Mark as in progress
             self.task_queue.mark_in_progress(task.id)
 
-            logger.info(f"Executing task {task.id}: {task.description[:50]}...")
+            logger.info(separator)
+            truncated_description = task.description
+            if len(truncated_description) > 75:
+                truncated_description = f"{truncated_description[:72]}..."
+            logger.info(f"Starting task {task.id}: {truncated_description}")
 
             # Execute with Claude Code SDK (async)
             start_time = time.time()
-            result_output, files_modified, commands_executed, exit_code, usage_metrics = await self.claude.execute_task(
-                task_id=task.id,
-                description=task.description,
-                task_type="general",
-                priority=task.priority.value,
-                timeout=self.config.agent.task_timeout_seconds,
-                project_id=task.project_id,
-                project_name=task.project_name,
-            )
+            try:
+                (
+                    result_output,
+                    files_modified,
+                    commands_executed,
+                    exit_code,
+                    usage_metrics,
+                ) = await asyncio.wait_for(
+                    self.claude.execute_task(
+                        task_id=task.id,
+                        description=task.description,
+                        task_type="general",
+                        priority=task.priority.value,
+                        timeout=self.config.agent.task_timeout_seconds,
+                        project_id=task.project_id,
+                        project_name=task.project_name,
+                    ),
+                    timeout=self.config.agent.task_timeout_seconds,
+                )
+            except asyncio.TimeoutError as exc:
+                timeout_minutes = max(1, self.config.agent.task_timeout_seconds // 60)
+                raise TimeoutError(
+                    f"Timed out after {timeout_minutes} minute(s)"
+                ) from exc
             processing_time = int(time.time() - start_time)
+
+            files_modified = sorted(files_modified) if files_modified else []
 
             # Check if execution was successful
             if exit_code != 0:
@@ -224,49 +329,7 @@ class SleepleassAgent:
             # Get task workspace
             task_workspace = self.claude.get_workspace_path(task.id, task.project_id)
 
-            if task_workspace and task_workspace.exists():
-                files_to_commit = list(files_modified)
-
-                if task.priority in (TaskPriority.RANDOM, TaskPriority.GENERATED):
-                    if not files_to_commit:
-                        summary_rel_path = self.git.write_summary_file(
-                            workspace_path=task_workspace,
-                            task_id=task.id,
-                            priority=task.priority.value,
-                            description=task.description,
-                            result_output=result_output,
-                        )
-                        if summary_rel_path:
-                            files_to_commit.append(summary_rel_path)
-
-                    if files_to_commit:
-                        commit_message = f"Capture thought: #{task.id} {task.description[:60]}"
-                        git_commit_sha = self.git.commit_workspace_changes(
-                            branch=git_branch,
-                            workspace_path=task_workspace,
-                            files=files_to_commit,
-                            message=commit_message,
-                        )
-                    else:
-                        logger.info(f"Task {task.id} produced no files to commit")
-
-                elif task.priority == TaskPriority.SERIOUS and files_to_commit:
-                    is_valid, validation_msg = self.git.validate_changes(task_workspace, files_to_commit)
-
-                    if is_valid:
-                        commit_message = f"Implement task #{task.id}: {task.description[:60]}"
-                        git_commit_sha = self.git.commit_workspace_changes(
-                            branch=git_branch,
-                            workspace_path=task_workspace,
-                            files=files_to_commit,
-                            message=commit_message,
-                        )
-                    else:
-                        logger.warning(f"Validation failed for task {task.id}: {validation_msg}")
-            else:
-                logger.warning(f"No workspace found for task {task.id}; skipping git operations")
-
-            # Save result
+            # Save result (commit info will be updated after git operations)
             result = self.results.save_result(
                 task_id=task.id,
                 output=result_output,
@@ -278,6 +341,70 @@ class SleepleassAgent:
                 git_branch=git_branch,
                 workspace_path=str(task_workspace),
             )
+
+            if task_workspace and task_workspace.exists():
+                self.claude.cleanup_workspace_caches(task_workspace)
+                files_for_commit: Set[str] = set(files_modified or [])
+
+                if task.priority in (TaskPriority.RANDOM, TaskPriority.GENERATED):
+                    if not files_for_commit:
+                        summary_rel_path = self.git.write_summary_file(
+                            workspace_path=task_workspace,
+                            task_id=task.id,
+                            priority=task.priority.value,
+                            description=task.description,
+                            result_output=result_output,
+                        )
+                        if summary_rel_path:
+                            files_for_commit.add(summary_rel_path)
+                    commit_targets = self._collect_commit_targets(task_workspace, files_for_commit)
+                    if commit_targets:
+                        commit_message = f"Capture thought: #{task.id} {task.description[:60]}"
+                        git_commit_sha = self.git.commit_workspace_changes(
+                            branch=git_branch,
+                            workspace_path=task_workspace,
+                            files=commit_targets,
+                            message=commit_message,
+                        )
+                elif task.priority == TaskPriority.SERIOUS:
+                    if files_for_commit:
+                        is_valid, validation_msg = self.git.validate_changes(
+                            task_workspace, sorted(files_for_commit)
+                        )
+                        if is_valid:
+                            commit_targets = self._collect_commit_targets(task_workspace, files_for_commit)
+                            if commit_targets:
+                                commit_message = f"Implement task #{task.id}: {task.description[:60]}"
+                                git_commit_sha = self.git.commit_workspace_changes(
+                                    branch=git_branch,
+                                    workspace_path=task_workspace,
+                                    files=commit_targets,
+                                    message=commit_message,
+                                )
+                        else:
+                            logger.warning(f"Validation failed for task {task.id}: {validation_msg}")
+                else:
+                    commit_targets = self._collect_commit_targets(task_workspace, files_for_commit)
+                    if commit_targets:
+                        commit_message = f"Task #{task.id} update: {task.description[:60]}"
+                        git_commit_sha = self.git.commit_workspace_changes(
+                            branch=git_branch,
+                            workspace_path=task_workspace,
+                            files=commit_targets,
+                            message=commit_message,
+                        )
+
+                if git_commit_sha:
+                    self.results.update_result_commit_info(
+                        result.id,
+                        git_commit_sha=git_commit_sha,
+                        git_pr_url=git_pr_url,
+                        git_branch=git_branch,
+                    )
+                else:
+                    logger.debug(f"No git commit produced for task {task.id}")
+            else:
+                logger.warning(f"No workspace found for task {task.id}; skipping git operations")
 
             # Mark as completed
             self.task_queue.mark_completed(task.id, result_id=result.id)
@@ -361,13 +488,23 @@ class SleepleassAgent:
             if self.live_status_tracker:
                 self.live_status_tracker.clear(task.id)
 
-            logger.info(f"Task {task.id} completed successfully")
+            total_cost = usage_metrics.get("total_cost_usd") or usage_metrics.get("worker_cost_usd")
+            cost_fragment = f", cost=${total_cost:.4f}" if total_cost is not None else ""
+            task_summary = (
+                f"Task {task.id} complete: status=success, exit_code={exit_code}, "
+                f"duration={processing_time}s, files={len(files_modified)}, "
+                f"commands={len(commands_executed)}{cost_fragment}"
+            )
 
         except Exception as e:
             # Handle PauseException specially (don't mark as failed)
             from sleepless_agent.exceptions import PauseException
 
             if isinstance(e, PauseException):
+                task_summary = (
+                    f"Task {task.id} complete: execution paused until "
+                    f"{e.reset_time.strftime('%Y-%m-%d %H:%M:%S')} due to usage limits."
+                )
                 logger.warning(
                     f"Pro plan usage limit reached during task {task.id}: "
                     f"{e.current_usage}/{e.usage_limit} ({e.percent_used:.1f}%)"
@@ -465,6 +602,56 @@ class SleepleassAgent:
 
             if self.live_status_tracker:
                 self.live_status_tracker.clear(task.id)
+
+            task_summary = (
+                f"Task {task.id} complete: status=failed, duration={processing_time}s, error={str(e)}"
+            )
+        finally:
+            if task_summary:
+                logger.info(task_summary)
+            logger.info(separator)
+
+    def _relative_to_workspace(self, workspace: Path, target: Path) -> Optional[str]:
+        """Compute a POSIX relative path from workspace to target for git staging."""
+        try:
+            rel_path = os.path.relpath(target, workspace)
+        except Exception as exc:
+            logger.debug(f"Failed to compute relative path from {workspace} to {target}: {exc}")
+            return None
+
+        if not rel_path or rel_path == ".":
+            return None
+
+        return Path(rel_path).as_posix()
+
+    def _collect_commit_targets(self, workspace_path: Path, base_files: Set[str]) -> List[str]:
+        """Build the list of paths to stage for git commits."""
+        commit_paths: Set[str] = set()
+
+        for entry in base_files:
+            if entry:
+                commit_paths.add(Path(entry).as_posix())
+
+        try:
+            for file_path in self.claude.list_workspace_files(workspace_path):
+                commit_paths.add(Path(file_path).as_posix())
+        except Exception as exc:
+            logger.debug(f"Unable to enumerate workspace files in {workspace_path}: {exc}")
+
+        tasks_root = workspace_path.parent
+        if tasks_root.exists():
+            rel_tasks = self._relative_to_workspace(workspace_path, tasks_root)
+            if rel_tasks:
+                commit_paths.add(rel_tasks)
+
+        workspace_root = tasks_root.parent if tasks_root else workspace_path
+        data_dir = workspace_root / "data"
+        if data_dir.exists():
+            rel_data = self._relative_to_workspace(workspace_path, data_dir)
+            if rel_data:
+                commit_paths.add(rel_data)
+
+        return sorted(path for path in commit_paths if path and path != ".")
 
     def _check_and_summarize_daily_reports(self):
         """Check if it's end of day and summarize reports"""

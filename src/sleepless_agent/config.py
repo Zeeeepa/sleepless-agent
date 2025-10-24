@@ -22,7 +22,7 @@ class SlackConfig(BaseSettings):
 class ClaudeCodeConfig(BaseSettings):
     """Claude Code CLI configuration"""
     binary_path: str = "claude"  # Path to claude binary (default: from PATH)
-    default_timeout: int = 3600  # 1 hour default timeout
+    default_timeout: int = 1800  # 30 minute default timeout
     cleanup_random_workspaces: bool = True  # Clean up after random tasks complete
     preserve_serious_workspaces: bool = True  # Keep serious task workspaces for debugging
 
@@ -99,7 +99,7 @@ class AgentConfig(BaseSettings):
     db_path: Path = Path("./workspace/data/tasks.db")
     results_path: Path = Path("./workspace/data/results")
     max_parallel_tasks: int = 1
-    task_timeout_seconds: int = 3600
+    task_timeout_seconds: int = 1800  # 30 minutes
 
 
 class Config(BaseSettings):

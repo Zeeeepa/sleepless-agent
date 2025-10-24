@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from loguru import logger
 from sqlalchemy.orm import Session
@@ -211,6 +211,9 @@ class SmartScheduler:
         max_parallel_tasks: int = 3,
         daily_budget_usd: float = 10.0,
         night_quota_percent: float = 90.0,
+        use_live_usage_check: bool = True,
+        usage_command: str = "claude /usage",
+        pause_threshold_percent: float = 85.0,
     ):
         """Initialize scheduler
 
@@ -219,9 +222,15 @@ class SmartScheduler:
             max_parallel_tasks: Maximum parallel tasks (default: 3)
             daily_budget_usd: Daily budget in USD (default: $10)
             night_quota_percent: Percentage for night usage (default: 90%)
+            use_live_usage_check: Use live Pro plan usage check instead of budget estimate (default: True)
+            usage_command: CLI command to check usage (default: "claude /usage")
+            pause_threshold_percent: Pause scheduling if usage >= this percent (default: 85%)
         """
         self.task_queue = task_queue
         self.max_parallel_tasks = max_parallel_tasks
+        self.use_live_usage_check = use_live_usage_check
+        self.usage_command = usage_command
+        self.pause_threshold_percent = pause_threshold_percent
 
         # Budget management with time-based allocation
         session = self.task_queue.SessionLocal()
@@ -231,10 +240,23 @@ class SmartScheduler:
             night_quota_percent=night_quota_percent,
         )
 
+        # Pro plan usage checker
+        self.usage_checker = None
+        if self.use_live_usage_check:
+            try:
+                from sleepless_agent.monitoring.pro_plan_usage import ProPlanUsageChecker
+                self.usage_checker = ProPlanUsageChecker(command=usage_command)
+                logger.info("Initialized live Pro plan usage checker")
+            except ImportError:
+                logger.warning("ProPlanUsageChecker not available, will fall back to budget-based check")
+                self.use_live_usage_check = False
+
         # Legacy credit window support
         self.active_windows: List[CreditWindow] = []
         self.current_window: Optional[CreditWindow] = None
         self._init_current_window()
+        self._last_budget_exhausted_log: Optional[datetime] = None
+        self._budget_exhausted_logged = False
 
     def _init_current_window(self):
         """Initialize current credit window"""
@@ -246,19 +268,78 @@ class SmartScheduler:
             self.active_windows.append(self.current_window)
             logger.info(f"New credit window started: {self.current_window}")
 
+    def _check_scheduling_allowed(self) -> Tuple[bool, str]:
+        """Check if scheduling is allowed based on usage/budget
+
+        Returns:
+            Tuple of (should_schedule: bool, status_message: str)
+        """
+        # Try live usage check first
+        if self.use_live_usage_check and self.usage_checker:
+            try:
+                messages_used, messages_limit, reset_time = self.usage_checker.get_usage()
+                usage_percent = (messages_used / messages_limit * 100) if messages_limit > 0 else 0
+
+                if usage_percent >= self.pause_threshold_percent:
+                    message = (
+                        f"Pro plan usage at {usage_percent:.0f}% exceeds threshold {self.pause_threshold_percent:.0f}%; "
+                        f"skipping task scheduling (resets at {reset_time.strftime('%H:%M:%S')})"
+                    )
+                    return False, message
+                else:
+                    return True, f"Pro plan usage at {usage_percent:.0f}% - ready to schedule"
+
+            except Exception as e:
+                logger.debug(f"Live usage check failed, falling back to budget-based check: {e}")
+                self.use_live_usage_check = False
+
+        # Fall back to budget-based check
+        estimated_cost = Decimal("0.50")
+        is_budget_available = self.budget_manager.is_budget_available(estimated_cost=estimated_cost)
+
+        if not is_budget_available:
+            time_label = TimeOfDay.get_time_label()
+            remaining = self.budget_manager.get_remaining_budget()
+
+            if remaining <= Decimal("0"):
+                message = (
+                    f"Budget exhausted for {time_label} period "
+                    f"(remaining: ${float(remaining):.4f}). Skipping task scheduling."
+                )
+            else:
+                message = (
+                    f"Remaining budget ${float(remaining):.4f} is below estimated task cost "
+                    f"${float(estimated_cost):.2f} during {time_label} period; skipping task scheduling."
+                )
+            return False, message
+        else:
+            return True, f"Budget available (${float(self.budget_manager.get_remaining_budget()):.2f} remaining)"
+
     def get_next_tasks(self) -> List[Task]:
         """Get next tasks to execute respecting concurrency, priorities, and budget"""
         self._init_current_window()
 
-        # Check if budget is available
-        if not self.budget_manager.is_budget_available():
-            time_label = TimeOfDay.get_time_label()
-            remaining = self.budget_manager.get_remaining_budget()
-            logger.warning(
-                f"Budget exhausted for {time_label} period "
-                f"(remaining: ${remaining:.4f}). Skipping task scheduling."
-            )
+        # Check if we should schedule tasks using live usage or budget
+        should_schedule, status_message = self._check_scheduling_allowed()
+
+        if not should_schedule:
+            now = datetime.utcnow()
+            should_log = True
+            if self._budget_exhausted_logged and self._last_budget_exhausted_log:
+                should_log = (now - self._last_budget_exhausted_log).total_seconds() >= 60
+
+            if should_log:
+                logger.warning(status_message)
+                self._last_budget_exhausted_log = now
+                self._budget_exhausted_logged = True
+            else:
+                logger.debug(status_message)
             return []
+        else:
+            if self._budget_exhausted_logged:
+                logger.info("Usage OK; resuming task scheduling.")
+            self._budget_exhausted_logged = False
+            self._last_budget_exhausted_log = None
 
         # Get in-progress tasks
         in_progress = self.task_queue.get_in_progress_tasks()
@@ -270,13 +351,26 @@ class SmartScheduler:
         # Get pending tasks in priority order
         pending = self.task_queue.get_pending_tasks(limit=available_slots)
 
-        # Log budget info when scheduling
+        # Log usage/budget info when scheduling
         if pending:
-            budget_status = self.budget_manager.get_budget_status()
-            logger.info(
-                f"Scheduling {len(pending)} task(s) during {budget_status['time_period']} "
-                f"(Budget: ${budget_status['remaining_budget_usd']:.2f} remaining)"
-            )
+            if self.use_live_usage_check and self.usage_checker:
+                try:
+                    messages_used, messages_limit, _ = self.usage_checker.get_usage()
+                    usage_percent = (messages_used / messages_limit * 100) if messages_limit > 0 else 0
+                    logger.info(f"Scheduling {len(pending)} task(s) (Pro plan usage: {usage_percent:.0f}%)")
+                except Exception:
+                    # Fall back to budget info if usage check fails
+                    budget_status = self.budget_manager.get_budget_status()
+                    logger.info(
+                        f"Scheduling {len(pending)} task(s) during {budget_status['time_period']} "
+                        f"(Budget: ${budget_status['remaining_budget_usd']:.2f} remaining)"
+                    )
+            else:
+                budget_status = self.budget_manager.get_budget_status()
+                logger.info(
+                    f"Scheduling {len(pending)} task(s) during {budget_status['time_period']} "
+                    f"(Budget: ${budget_status['remaining_budget_usd']:.2f} remaining)"
+                )
 
         return pending
 

@@ -1,6 +1,4 @@
 """Daily report generation system - append-only updates with end-of-day summarization"""
-
-import json
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List
@@ -22,6 +20,7 @@ class TaskMetrics:
     git_info: Optional[str] = None
     error_message: Optional[str] = None
     timestamp: Optional[str] = None
+    project_id: Optional[str] = None
 
 
 class ReportGenerator:
@@ -35,13 +34,16 @@ class ReportGenerator:
         """
         self.base_path = Path(base_path)
         self.base_path.mkdir(parents=True, exist_ok=True)
+        self.daily_dir = self.base_path
 
-    def append_task_completion(self, task_metrics: TaskMetrics):
+    def append_task_completion(self, task_metrics: TaskMetrics, project_id: Optional[str] = None):
         """Append task completion entry to daily report
 
         Args:
             task_metrics: Task metrics to append
         """
+        if project_id:
+            task_metrics.project_id = project_id
         timestamp = task_metrics.timestamp or datetime.utcnow().isoformat()
         self._append_to_daily_report(task_metrics, timestamp)
 
@@ -80,6 +82,9 @@ class ReportGenerator:
         entry = f"- {status_emoji} [{time_str}] Task #{task_metrics.task_id}: {task_metrics.description[:80]} {priority_icon}\n"
         entry += f"  - Duration: {task_metrics.duration_seconds}s\n"
         entry += f"  - Files modified: {task_metrics.files_modified}, Commands: {task_metrics.commands_executed}\n"
+
+        if task_metrics.project_id:
+            entry += f"  - Project: {task_metrics.project_id}\n"
 
         if task_metrics.git_info:
             entry += f"  - Git: {task_metrics.git_info}\n"
@@ -202,6 +207,11 @@ class ReportGenerator:
             header += "## Tasks\n\n"
             header += "## Summary\n\n"
             report_file.write_text(header)
+
+    def get_daily_report_path(self, date: Optional[datetime] = None) -> Path:
+        """Return the filesystem path for the daily report."""
+        target_date = (date or datetime.utcnow()).strftime("%Y-%m-%d")
+        return self.base_path / f"{target_date}.md"
 
     def get_daily_report(self, date: Optional[str] = None) -> str:
         """Get daily report content

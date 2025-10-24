@@ -24,6 +24,29 @@ class ResultManager:
         self.engine = create_engine(f"sqlite:///{db_path}", echo=False, future=True)
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False)
 
+    def _write_result_file(self, result: Result) -> Path:
+        """Persist result data to JSON file and return its path."""
+        result_file = self.results_path / f"task_{result.task_id}_{result.id}.json"
+        try:
+            payload = {
+                "task_id": result.task_id,
+                "result_id": result.id,
+                "created_at": result.created_at.isoformat() if result.created_at else None,
+                "output": result.output,
+                "files_modified": json.loads(result.files_modified) if result.files_modified else None,
+                "commands_executed": json.loads(result.commands_executed) if result.commands_executed else None,
+                "processing_time_seconds": result.processing_time_seconds,
+                "git_commit_sha": result.git_commit_sha,
+                "git_pr_url": result.git_pr_url,
+                "git_branch": result.git_branch,
+                "workspace_path": result.workspace_path,
+            }
+            result_file.write_text(json.dumps(payload, indent=2))
+        except Exception as exc:
+            logger.error(f"Failed to write result file {result_file}: {exc}")
+            raise
+        return result_file
+
     def save_result(
         self,
         task_id: int,
@@ -55,25 +78,7 @@ class ResultManager:
             session.commit()
 
             # Save to file
-            result_file = self.results_path / f"task_{task_id}_{result.id}.json"
-            result_file.write_text(
-                json.dumps(
-                    {
-                        "task_id": task_id,
-                        "result_id": result.id,
-                        "created_at": result.created_at.isoformat(),
-                        "output": output,
-                        "files_modified": files_modified,
-                        "commands_executed": commands_executed,
-                        "processing_time_seconds": processing_time_seconds,
-                        "git_commit_sha": git_commit_sha,
-                        "git_pr_url": git_pr_url,
-                        "git_branch": git_branch,
-                        "workspace_path": workspace_path,
-                    },
-                    indent=2,
-                )
-            )
+            result_file = self._write_result_file(result)
 
             logger.info(f"Result saved for task {task_id}: {result_file}")
             return result
@@ -131,3 +136,32 @@ class ResultManager:
             if age_days > keep_days:
                 file_path.unlink()
                 logger.info(f"Deleted old result file: {file_path}")
+
+    def update_result_commit_info(
+        self,
+        result_id: int,
+        git_commit_sha: Optional[str],
+        git_pr_url: Optional[str] = None,
+        git_branch: Optional[str] = None,
+    ) -> Optional[Path]:
+        """Update git commit information for a result record."""
+        session = self.SessionLocal()
+        try:
+            result = session.query(Result).filter(Result.id == result_id).first()
+            if not result:
+                logger.warning(f"Result {result_id} not found for commit update")
+                return None
+
+            result.git_commit_sha = git_commit_sha
+            result.git_pr_url = git_pr_url
+            result.git_branch = git_branch
+            session.commit()
+
+            return self.results_path / f"task_{result.task_id}_{result.id}.json"
+
+        except Exception as exc:
+            session.rollback()
+            logger.error(f"Failed to update commit info for result {result_id}: {exc}")
+            return None
+        finally:
+            session.close()

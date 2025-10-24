@@ -45,7 +45,7 @@ class AutoTaskGenerator:
         self.generation_count_this_hour = 0
         self.current_hour_start: Optional[datetime] = None
 
-    def check_and_generate(self) -> bool:
+    async def check_and_generate(self) -> bool:
         """Check if conditions are met and generate a task if possible"""
         if not self.config.enabled:
             return False
@@ -59,7 +59,7 @@ class AutoTaskGenerator:
             return False
 
         # Try to generate a task
-        task = self._generate_task()
+        task = await self._generate_task()
         if task:
             logger.info(f"Auto-generated task {task.id}: {task.description[:60]}")
             return True
@@ -110,7 +110,7 @@ class AutoTaskGenerator:
         else:
             return self.config.rate_limit_day
 
-    def _generate_task(self) -> Optional[Task]:
+    async def _generate_task(self) -> Optional[Task]:
         """Generate a task from selected source"""
         # Select source based on weights
         source = self._select_source()
@@ -122,7 +122,7 @@ class AutoTaskGenerator:
         elif source == "code":
             task_desc = self._generate_from_code_analysis()
         elif source == "ai":
-            task_desc = self._generate_from_ai()
+            task_desc = await self._generate_from_ai()
         elif source == "backlog":
             task_desc = self._generate_from_backlog()
         else:
@@ -181,10 +181,10 @@ class AutoTaskGenerator:
             logger.debug(f"Code analysis failed: {e}")
             return None
 
-    def _generate_from_ai(self) -> Optional[str]:
+    async def _generate_from_ai(self) -> Optional[str]:
         """Generate task using AI/Claude API"""
         try:
-            return self.ai_generator.generate_improvement_idea()
+            return await self.ai_generator.generate_improvement_idea_async()
         except Exception as e:
             logger.debug(f"AI generation failed: {e}")
             return None
