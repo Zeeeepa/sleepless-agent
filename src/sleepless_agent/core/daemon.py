@@ -1,12 +1,10 @@
 """Main agent daemon - runs continuously"""
 
 import asyncio
-import json
 import signal
 import sys
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Optional
 
 from loguru import logger
@@ -22,6 +20,7 @@ from sleepless_agent.storage.results import ResultManager
 from sleepless_agent.core.scheduler import SmartScheduler, BudgetManager
 from sleepless_agent.core.task_queue import TaskQueue
 from sleepless_agent.core.auto_generator import AutoTaskGenerator
+from sleepless_agent.core.workspace import WorkspaceSetup
 
 # Setup loguru
 logger.remove()  # Remove default handler
@@ -36,11 +35,10 @@ class SleepleassAgent:
         self.config = get_config()
         self.running = False
         self.last_daily_summarization = None  # Track last summarization time
-        self.use_remote_repo = False
-        self.remote_repo_url: Optional[str] = None
-
-        # Interactive setup on first launch
-        self._ensure_first_time_setup()
+        setup = WorkspaceSetup(self.config.agent)
+        setup_result = setup.run()
+        self.use_remote_repo = setup_result.use_remote_repo
+        self.remote_repo_url = setup_result.remote_repo_url
 
         # Initialize components
         self._init_directories()
@@ -106,65 +104,6 @@ class SleepleassAgent:
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
-
-    def _ensure_first_time_setup(self):
-        """Run interactive setup for workspace and remote configuration."""
-        state_path = Path.home() / ".sleepless_agent_setup.json"
-        default_workspace = self.config.agent.workspace_root.expanduser().resolve()
-        setup_data = {}
-
-        if state_path.exists():
-            try:
-                setup_data = json.loads(state_path.read_text())
-                logger.info(f"Loaded existing setup from {state_path}")
-            except Exception as exc:
-                logger.warning(f"Failed to parse setup file {state_path}: {exc}")
-
-        if not setup_data:
-            # Workspace prompt
-            print("\nWelcome to Sleepless Agent! Let's finish the initial setup.")
-            workspace_input = input(f"Workspace root [{default_workspace}]: ").strip()
-            workspace_root = Path(workspace_input).expanduser().resolve() if workspace_input else default_workspace
-
-            # Remote prompt
-            use_remote_input = input("Use remote GitHub repo to track? [y/N]: ").strip().lower()
-            use_remote_repo = use_remote_input in {"y", "yes"}
-
-            remote_repo_url = None
-            if use_remote_repo:
-                default_remote = "git@github.com:username/sleepless-agent.git"
-                remote_repo_input = input(f"Remote repository URL [{default_remote}]: ").strip()
-                remote_repo_url = remote_repo_input or default_remote
-
-            setup_data = {
-                "workspace_root": str(workspace_root),
-                "use_remote_repo": use_remote_repo,
-                "remote_repo_url": remote_repo_url,
-            }
-
-            try:
-                state_path.write_text(json.dumps(setup_data, indent=2))
-                logger.info(f"Saved setup configuration to {state_path}")
-            except Exception as exc:
-                logger.warning(f"Failed to write setup file {state_path}: {exc}")
-        else:
-            workspace_root = Path(setup_data.get("workspace_root", default_workspace))
-            use_remote_repo = setup_data.get("use_remote_repo", False)
-            remote_repo_url = setup_data.get("remote_repo_url")
-
-        self._apply_workspace_root(Path(workspace_root))
-        self.use_remote_repo = bool(use_remote_repo)
-        self.remote_repo_url = remote_repo_url
-
-    def _apply_workspace_root(self, workspace_root: Path):
-        """Update config paths to use a new workspace root."""
-        workspace_root = workspace_root.expanduser().resolve()
-        data_dir = workspace_root / "data"
-
-        self.config.agent.workspace_root = workspace_root
-        self.config.agent.shared_workspace = workspace_root / "shared"
-        self.config.agent.db_path = data_dir / "tasks.db"
-        self.config.agent.results_path = data_dir / "results"
 
     def _init_directories(self):
         """Initialize required directories"""
@@ -270,7 +209,7 @@ class SleepleassAgent:
             # Handle git operations based on priority
             git_commit_sha = None
             git_pr_url = None
-            git_branch = self._get_branch_for_task(task)
+            git_branch = self.git.determine_branch(task.project_id)
 
             # Get task workspace
             task_workspace = self.claude.get_workspace_path(task.id, task.project_id)
@@ -280,7 +219,13 @@ class SleepleassAgent:
 
                 if task.priority in (TaskPriority.RANDOM, TaskPriority.GENERATED):
                     if not files_to_commit:
-                        summary_rel_path = self._write_task_summary(task, task_workspace, result_output)
+                        summary_rel_path = self.git.write_summary_file(
+                            workspace_path=task_workspace,
+                            task_id=task.id,
+                            priority=task.priority.value,
+                            description=task.description,
+                            result_output=result_output,
+                        )
                         if summary_rel_path:
                             files_to_commit.append(summary_rel_path)
 
@@ -501,36 +446,6 @@ class SleepleassAgent:
             # Notify user
             if task.assigned_to:
                 self.bot.send_message(task.assigned_to, f"❌ Task #{task.id} failed: {str(e)}")
-
-    def _get_branch_for_task(self, task) -> str:
-        """Determine branch name for a task."""
-        if task.project_id:
-            return f"project/{task.project_id}"
-        return self.git.default_task_branch
-
-    def _write_task_summary(self, task, workspace_path: Path, result_output: str) -> Optional[str]:
-        """Create a lightweight summary file for random/generated tasks."""
-        try:
-            workspace_path.mkdir(parents=True, exist_ok=True)
-            summary_path = workspace_path / f"task_{task.id}_summary.md"
-
-            output_limit = 2000
-            truncated_output = result_output[:output_limit]
-            if len(result_output) > output_limit:
-                truncated_output += "\n\n[output truncated for summary]"
-
-            summary_content = (
-                f"# Task #{task.id} Summary\n\n"
-                f"**When**: {datetime.utcnow().isoformat()} UTC\n"
-                f"**Priority**: {task.priority.value}\n"
-                f"**Description**: {task.description}\n\n"
-                f"## Output\n\n{truncated_output}\n"
-            )
-            summary_path.write_text(summary_content)
-            return summary_path.relative_to(workspace_path).as_posix()
-        except Exception as exc:
-            logger.warning(f"Failed to write summary for task {task.id}: {exc}")
-            return None
 
     def _check_and_summarize_daily_reports(self):
         """Check if it's end of day and summarize reports"""

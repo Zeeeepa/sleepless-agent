@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
@@ -125,6 +126,46 @@ class GitManager:
         except Exception as exc:
             logger.error(f"Failed to configure remote '{remote_name}': {exc}")
             raise
+
+    # ------------------------------------------------------------------
+    # High-level task helpers
+    # ------------------------------------------------------------------
+    def determine_branch(self, project_id: Optional[str]) -> str:
+        """Get branch name for a given project scope."""
+        if project_id:
+            return f"project/{project_id}"
+        return self.default_task_branch
+
+    def write_summary_file(
+        self,
+        workspace_path: Path,
+        task_id: int,
+        priority: str,
+        description: str,
+        result_output: str,
+        limit: int = 2000,
+    ) -> Optional[str]:
+        """Create a summary file for lightweight tasks and return relative path."""
+        try:
+            workspace_path.mkdir(parents=True, exist_ok=True)
+            summary_path = workspace_path / f"task_{task_id}_summary.md"
+
+            truncated_output = result_output[:limit]
+            if len(result_output) > limit:
+                truncated_output += "\n\n[output truncated for summary]"
+
+            summary_content = (
+                f"# Task #{task_id} Summary\n\n"
+                f"**When**: {datetime.utcnow().isoformat()} UTC\n"
+                f"**Priority**: {priority}\n"
+                f"**Description**: {description}\n\n"
+                f"## Output\n\n{truncated_output}\n"
+            )
+            summary_path.write_text(summary_content)
+            return summary_path.relative_to(workspace_path).as_posix()
+        except Exception as exc:
+            logger.warning(f"Failed to write summary for task {task_id}: {exc}")
+            return None
 
     # ------------------------------------------------------------------
     # Validation utilities reused by daemon

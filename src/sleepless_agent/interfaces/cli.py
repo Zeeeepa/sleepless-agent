@@ -16,6 +16,7 @@ from loguru import logger
 
 from sleepless_agent.config import get_config
 from sleepless_agent.core import TaskPriority, TaskQueue, init_db
+from sleepless_agent.core.task_utils import parse_task_description, slugify_project
 from sleepless_agent.monitoring.monitor import HealthMonitor
 from sleepless_agent.monitoring.report_generator import ReportGenerator
 
@@ -72,14 +73,7 @@ def command_task(ctx: CLIContext, description: str, priority: TaskPriority, proj
         print("Description cannot be empty", file=sys.stderr)
         return 1
 
-    # Parse --project=<name> from description (for consistency with bot)
-    import re
-    parsed_project = None
-    if "--project=" in description:
-        match = re.search(r'--project=(\S+)', description)
-        if match:
-            parsed_project = match.group(1)
-            description = description.replace(f"--project={parsed_project}", "").strip()
+    description, parsed_project, note = parse_task_description(description)
 
     # Prefer argparse --project flag over parsed one
     final_project_name = project_name or parsed_project
@@ -87,7 +81,7 @@ def command_task(ctx: CLIContext, description: str, priority: TaskPriority, proj
     # Generate project_id from project_name (simple slug)
     project_id = None
     if final_project_name:
-        project_id = re.sub(r'[^a-z0-9-]', '-', final_project_name.lower())
+        project_id = slugify_project(final_project_name)
 
     task = ctx.task_queue.add_task(
         description=description,
@@ -103,6 +97,8 @@ def command_task(ctx: CLIContext, description: str, priority: TaskPriority, proj
         label = "Generated"
     project_info = f" [Project: {final_project_name}]" if final_project_name else ""
     print(f"{label} task #{task.id} queued{project_info}:\n{description}")
+    if note:
+        print(note, file=sys.stderr)
     return 0
 
 
