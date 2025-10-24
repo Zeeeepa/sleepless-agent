@@ -13,6 +13,7 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 
 from sleepless_agent.core.models import TaskPriority
 from sleepless_agent.core.task_queue import TaskQueue
+from sleepless_agent.monitoring.report_generator import ReportGenerator
 
 
 def _slugify_project(identifier: str) -> str:
@@ -23,13 +24,14 @@ def _slugify_project(identifier: str) -> str:
 class SlackBot:
     """Slack bot for task management"""
 
-    def __init__(self, bot_token: str, app_token: str, task_queue: TaskQueue, scheduler=None, monitor=None):
+    def __init__(self, bot_token: str, app_token: str, task_queue: TaskQueue, scheduler=None, monitor=None, report_generator=None):
         """Initialize Slack bot"""
         self.bot_token = bot_token
         self.app_token = app_token
         self.task_queue = task_queue
         self.scheduler = scheduler
         self.monitor = monitor
+        self.report_generator = report_generator
         self.client = WebClient(token=bot_token)
         self.socket_mode_client = SocketModeClient(app_token=app_token, web_client=self.client)
 
@@ -90,24 +92,12 @@ class SlackBot:
             self.handle_think_command(text, user, channel, response_url)
         elif command == "/status":
             self.handle_status_command(response_url)
-        elif command == "/results":
-            self.handle_results_command(text, response_url)
-        elif command == "/priority":
-            self.handle_priority_command(text, response_url)
         elif command == "/cancel":
             self.handle_cancel_command(text, response_url)
-        elif command == "/credits":
-            self.handle_credits_command(response_url)
-        elif command == "/health":
-            self.handle_health_command(response_url)
-        elif command == "/metrics":
-            self.handle_metrics_command(response_url)
-        elif command == "/ls":
-            self.handle_ls_command(response_url)
-        elif command == "/cat":
-            self.handle_cat_command(text, response_url)
-        elif command == "/rm":
-            self.handle_rm_command(text, response_url)
+        elif command == "/report":
+            self.handle_report_command(text, response_url)
+        elif command == "/trash":
+            self.handle_trash_command(text, response_url)
         else:
             self.send_response(response_url, f"Unknown command: {command}")
 
@@ -237,97 +227,96 @@ class SlackBot:
             logger.error(f"Failed to add task: {e}")
 
     def handle_status_command(self, response_url: str):
-        """Handle /status command"""
+        """Handle /status command - comprehensive system status"""
         try:
-            status = self.task_queue.get_queue_status()
+            # System health
+            health = self.monitor.check_health() if self.monitor else {}
+            status_emoji = {
+                "healthy": "✅",
+                "degraded": "⚠️",
+                "unhealthy": "❌",
+            }.get(health.get("status", "unknown"), "❓")
+
+            system = health.get("system", {})
+
             message = (
-                f"📊 Queue Status\n"
-                f"Total: {status['total']}\n"
-                f"Pending: {status['pending']}\n"
-                f"In Progress: {status['in_progress']}\n"
-                f"Completed: {status['completed']}\n"
-                f"Failed: {status['failed']}"
+                f"{status_emoji} System: {health.get('status', 'unknown').upper()}\n"
+                f"⏱️ Uptime: {health.get('uptime_human', 'N/A')}\n"
+                f"🖥️ CPU: {system.get('cpu_percent', 'N/A')}%\n"
+                f"💾 Memory: {system.get('memory_percent', 'N/A')}%\n\n"
             )
+
+            # Queue status
+            queue_status = self.task_queue.get_queue_status()
+            message += (
+                f"📊 Queue\n"
+                f"Total: {queue_status['total']}\n"
+                f"Pending: {queue_status['pending']}\n"
+                f"In Progress: {queue_status['in_progress']}\n"
+                f"Completed: {queue_status['completed']}\n"
+                f"Failed: {queue_status['failed']}"
+            )
+
             self.send_response(response_url, message)
         except Exception as e:
             self.send_response(response_url, f"Failed to get status: {str(e)}")
             logger.error(f"Failed to get status: {e}")
 
-    def handle_results_command(self, task_id_str: str, response_url: str):
-        """Handle /results command"""
+    def handle_cancel_command(self, identifier_str: str, response_url: str):
+        """Handle /cancel command - move task or project to trash
+
+        Usage: /cancel <task_id> or /cancel <project_id_or_name>
+        """
         try:
-            if not task_id_str:
-                self.send_response(response_url, "Usage: /results <task_id>")
+            if not identifier_str:
+                self.send_response(response_url, "Usage: /cancel <task_id_or_project>")
                 return
 
-            task_id = int(task_id_str)
-            task = self.task_queue.get_task(task_id)
+            # Try to parse as integer (task ID)
+            try:
+                task_id = int(identifier_str)
+                task = self.task_queue.cancel_task(task_id)
+                if task:
+                    self.send_response(response_url, f"Task #{task_id} moved to trash")
+                else:
+                    self.send_response(response_url, f"Task #{task_id} not found or already running")
+                return
+            except ValueError:
+                pass
 
-            if not task:
-                self.send_response(response_url, f"Task #{task_id} not found")
+            # Try to interpret as project ID
+            project_id = _slugify_project(identifier_str)
+            project = self.task_queue.get_project_by_id(project_id)
+
+            if not project:
+                self.send_response(response_url, f"Project not found: {identifier_str}")
                 return
 
-            message = f"Task #{task.id}\nStatus: {task.status.value}\nPriority: {task.priority.value}"
-            if task.error_message:
-                message += f"\nError: {task.error_message}"
+            # Soft delete tasks from database
+            count = self.task_queue.delete_project(project_id)
+            message = f"✅ Moved {count} task(s) to trash in database\n"
+
+            # Move workspace to trash
+            from datetime import datetime
+            from pathlib import Path
+            import shutil
+
+            workspace_path = Path("workspace") / f"project_{project_id}"
+            if workspace_path.exists():
+                trash_dir = Path("workspace") / "trash"
+                trash_dir.mkdir(parents=True, exist_ok=True)
+                timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                trash_path = trash_dir / f"project_{project_id}_{timestamp}"
+                workspace_path.rename(trash_path)
+                message += f"✅ Moved workspace to trash"
+            else:
+                message += f"⚠️ Workspace not found (no workspace to move)"
 
             self.send_response(response_url, message)
 
-        except ValueError:
-            self.send_response(response_url, "Invalid task ID")
         except Exception as e:
-            self.send_response(response_url, f"Failed to get results: {str(e)}")
-            logger.error(f"Failed to get results: {e}")
-
-    def handle_priority_command(self, args: str, response_url: str):
-        """Handle /priority command"""
-        try:
-            parts = args.split()
-            if len(parts) != 2:
-                self.send_response(response_url, "Usage: /priority <task_id> random|serious")
-                return
-
-            task_id = int(parts[0])
-            priority_str = parts[1].lower()
-
-            if priority_str not in ["random", "serious"]:
-                self.send_response(response_url, "Priority must be 'random' or 'serious'")
-                return
-
-            priority = TaskPriority.RANDOM if priority_str == "random" else TaskPriority.SERIOUS
-            task = self.task_queue.update_priority(task_id, priority)
-
-            if task:
-                self.send_response(response_url, f"Task #{task_id} priority updated to {priority.value}")
-            else:
-                self.send_response(response_url, f"Task #{task_id} not found")
-
-        except ValueError:
-            self.send_response(response_url, "Invalid task ID")
-        except Exception as e:
-            self.send_response(response_url, f"Failed to update priority: {str(e)}")
-            logger.error(f"Failed to update priority: {e}")
-
-    def handle_cancel_command(self, task_id_str: str, response_url: str):
-        """Handle /cancel command"""
-        try:
-            if not task_id_str:
-                self.send_response(response_url, "Usage: /cancel <task_id>")
-                return
-
-            task_id = int(task_id_str)
-            task = self.task_queue.cancel_task(task_id)
-
-            if task:
-                self.send_response(response_url, f"Task #{task_id} cancelled")
-            else:
-                self.send_response(response_url, f"Task #{task_id} not found or already running")
-
-        except ValueError:
-            self.send_response(response_url, "Invalid task ID")
-        except Exception as e:
-            self.send_response(response_url, f"Failed to cancel task: {str(e)}")
-            logger.error(f"Failed to cancel task: {e}")
+            self.send_response(response_url, f"Failed to move to trash: {str(e)}")
+            logger.error(f"Failed to cancel: {e}")
 
     def send_response(self, response_url: str, message: str):
         """Send response to Slack"""
@@ -360,225 +349,187 @@ class SlackBot:
         except SlackApiError as e:
             logger.error(f"Failed to send thread message: {e}")
 
-    def handle_credits_command(self, response_url: str):
-        """Handle /credits command - shows budget and usage information"""
-        try:
-            if not self.scheduler:
-                self.send_response(response_url, "Scheduler not available")
-                return
+    def handle_trash_command(self, args: str, response_url: str):
+        """Handle /trash command - manage trash (list, restore, empty)
 
-            credit_status = self.scheduler.get_credit_status()
-            window = credit_status["current_window"]
-            queue = credit_status["queue"]
-            budget = credit_status.get("budget", {})
+        Usage:
+            /trash list       - Show trash contents
+            /trash restore <project> - Restore project from trash
+            /trash empty      - Permanently delete trash
+        """
+        from pathlib import Path
+        import shutil
 
-            # Build budget section
-            time_icon = "🌙" if budget.get("is_nighttime") else "☀️"
-            time_period = budget.get("time_period", "unknown")
-            budget_section = ""
-            if budget:
-                remaining = budget.get("remaining_budget_usd", 0)
-                quota = budget.get("current_quota_usd", 0)
-                today_total = budget.get("today_total_usage_usd", 0)
-                budget_section = (
-                    f"{time_icon} {time_period.capitalize()} Budget\n"
-                    f"Remaining: ${remaining:.2f} / ${quota:.2f}\n"
-                    f"Today Total: ${today_total:.2f}\n"
-                    f"\n"
+        subcommand = args.split()[0].lower() if args else "list"
+        remaining_args = args[len(subcommand):].strip() if args else ""
+
+        if subcommand == "list":
+            try:
+                trash_dir = Path("workspace") / "trash"
+                if not trash_dir.exists():
+                    self.send_response(response_url, "🗑️ Trash is empty")
+                    return
+
+                items = list(trash_dir.iterdir())
+                if not items:
+                    self.send_response(response_url, "🗑️ Trash is empty")
+                    return
+
+                message = "🗑️ Trash Contents:\n"
+                for item in sorted(items):
+                    if item.is_dir():
+                        size_mb = sum(f.stat().st_size for f in item.rglob("*") if f.is_file()) / (1024 * 1024)
+                        message += f"  📁 {item.name} ({size_mb:.1f} MB)\n"
+                self.send_response(response_url, message)
+            except Exception as e:
+                self.send_response(response_url, f"Failed to list trash: {str(e)}")
+                logger.error(f"Failed to list trash: {e}")
+
+        elif subcommand == "restore":
+            try:
+                if not remaining_args:
+                    self.send_response(response_url, "Usage: /trash restore <project_id_or_name>")
+                    return
+
+                trash_dir = Path("workspace") / "trash"
+                if not trash_dir.exists():
+                    self.send_response(response_url, "🗑️ Trash is empty")
+                    return
+
+                # Find matching item in trash
+                search_term = remaining_args.lower().replace(" ", "-")
+                matching_items = [item for item in trash_dir.iterdir() if search_term in item.name.lower()]
+
+                if not matching_items:
+                    self.send_response(response_url, f"Project not found in trash: {remaining_args}")
+                    return
+
+                if len(matching_items) > 1:
+                    message = f"Multiple matches found for '{remaining_args}'. Be more specific:\n"
+                    for item in matching_items:
+                        message += f"  - {item.name}\n"
+                    self.send_response(response_url, message)
+                    return
+
+                trash_item = matching_items[0]
+
+                # Extract project_id from trash item name (e.g., "project_myapp_20231015_120000")
+                parts = trash_item.name.split("_")
+                if parts[0] != "project":
+                    self.send_response(response_url, f"Invalid trash item format: {trash_item.name}")
+                    return
+
+                # Reconstruct project_id (everything except the last timestamp)
+                project_id = "_".join(parts[1:-2])  # Remove "project" prefix and timestamp parts
+
+                # Restore workspace
+                workspace_path = Path("workspace") / f"project_{project_id}"
+                if workspace_path.exists():
+                    self.send_response(response_url, f"Workspace already exists at {workspace_path}")
+                    return
+
+                trash_item.rename(workspace_path)
+                self.send_response(
+                    response_url,
+                    f"✅ Restored project '{project_id}' from trash\n"
+                    f"⚠️ Note: Tasks remain in CANCELLED status. Update them manually if needed."
                 )
+            except Exception as e:
+                self.send_response(response_url, f"Failed to restore from trash: {str(e)}")
+                logger.error(f"Failed to restore from trash: {e}")
 
-            message = (
-                f"💳 Usage & Budget Status\n"
-                f"\n"
-                f"{budget_section}"
-                f"⏱️ Credit Window\n"
-                f"Time Remaining: {window['time_remaining_minutes']}m\n"
-                f"Tasks Executed: {window['tasks_executed']}\n"
-                f"\n"
-                f"📋 Queue:\n"
-                f"Pending: {queue['pending']}\n"
-                f"In Progress: {queue['in_progress']}\n"
-                f"Completed: {queue['completed']}\n"
-                f"Failed: {queue['failed']}\n"
-                f"\n"
-                f"⚙️ Capacity: {self.scheduler.get_execution_slots_available()}/{credit_status['max_parallel']} slots available"
+        elif subcommand == "empty":
+            try:
+                trash_dir = Path("workspace") / "trash"
+                if not trash_dir.exists() or not list(trash_dir.iterdir()):
+                    self.send_response(response_url, "🗑️ Trash is already empty")
+                    return
+
+                count = 0
+                for item in trash_dir.iterdir():
+                    if item.is_dir():
+                        shutil.rmtree(item)
+                        count += 1
+
+                self.send_response(response_url, f"✅ Deleted {count} item(s) from trash")
+            except Exception as e:
+                self.send_response(response_url, f"Failed to empty trash: {str(e)}")
+                logger.error(f"Failed to empty trash: {e}")
+
+        else:
+            self.send_response(
+                response_url,
+                "Usage: /trash list|restore|empty\n"
+                "  `list` - Show trash contents\n"
+                "  `restore <project>` - Restore project from trash\n"
+                "  `empty` - Permanently delete all trash"
             )
-            self.send_response(response_url, message)
 
-        except Exception as e:
-            self.send_response(response_url, f"Failed to get credit status: {str(e)}")
-            logger.error(f"Failed to get credit status: {e}")
+    def handle_report_command(self, identifier: str, response_url: str):
+        """Handle /report command - unified report handler (task/daily/project)
 
-    def handle_health_command(self, response_url: str):
-        """Handle /health command"""
+        Usage:
+            /report              # Today's daily report
+            /report 123          # Task #123 details
+            /report 2025-10-22   # Specific date report
+            /report <project>    # Project report
+            /report --list       # List all available reports
+        """
         try:
-            if not self.monitor:
-                self.send_response(response_url, "Monitor not available")
+            if not self.report_generator:
+                self.send_response(response_url, "Report generator not available")
                 return
 
-            health = self.monitor.check_health()
-            status_emoji = {
-                "healthy": "✅",
-                "degraded": "⚠️",
-                "unhealthy": "❌",
-            }.get(health["status"], "❓")
+            args = identifier.strip() if identifier else ""
 
-            system = health.get("system", {})
-            db = health.get("database", {})
-            storage = health.get("storage", {})
+            # Check for --list flag
+            if "--list" in args:
+                daily_reports = self.report_generator.list_daily_reports()
+                project_reports = self.report_generator.list_project_reports()
 
-            message = (
-                f"{status_emoji} Status: {health['status'].upper()}\n"
-                f"Uptime: {health['uptime_human']}\n"
-                f"\n"
-                f"🖥️ System:\n"
-                f"CPU: {system.get('cpu_percent', 'N/A')}%\n"
-                f"Memory: {system.get('memory_percent', 'N/A')}%\n"
-                f"\n"
-                f"💾 Database:\n"
-                f"Size: {db.get('size_mb', 'N/A')} MB\n"
-                f"Modified: {db.get('modified_ago_seconds', 'N/A')}s ago\n"
-                f"\n"
-                f"📦 Storage:\n"
-                f"Files: {storage.get('count', 'N/A')}\n"
-                f"Size: {storage.get('total_size_mb', 'N/A')} MB"
-            )
-            self.send_response(response_url, message)
+                message = ""
+                if daily_reports:
+                    message += "📅 Daily Reports:\n"
+                    for report_date in daily_reports[:5]:
+                        message += f"  • {report_date}\n"
+                    if len(daily_reports) > 5:
+                        message += f"  ... and {len(daily_reports) - 5} more\n"
+                else:
+                    message += "📅 No daily reports\n"
 
-        except Exception as e:
-            self.send_response(response_url, f"Failed to get health status: {str(e)}")
-            logger.error(f"Failed to get health status: {e}")
+                if project_reports:
+                    message += "\n📦 Project Reports:\n"
+                    for project_id in project_reports:
+                        message += f"  • {project_id}\n"
+                else:
+                    message += "📦 No project reports"
 
-    def handle_metrics_command(self, response_url: str):
-        """Handle /metrics command"""
-        try:
-            if not self.monitor:
-                self.send_response(response_url, "Monitor not available")
+                self.send_response(response_url, message)
                 return
 
-            stats = self.monitor.get_stats()
-
-            message = (
-                f"📊 Performance Metrics\n"
-                f"Uptime: {stats['uptime_human']}\n"
-                f"\n"
-                f"Tasks:\n"
-                f"✓ Completed: {stats['tasks_completed']}\n"
-                f"✗ Failed: {stats['tasks_failed']}\n"
-                f"Success Rate: {stats['success_rate']:.1f}%\n"
-                f"\n"
-                f"Timing:\n"
-                f"Avg Duration: {stats['avg_processing_time']}s\n"
-                f"Total Time: {stats['total_processing_time']}s"
-            )
-            self.send_response(response_url, message)
-
-        except Exception as e:
-            self.send_response(response_url, f"Failed to get metrics: {str(e)}")
-            logger.error(f"Failed to get metrics: {e}")
-
-    def handle_ls_command(self, response_url: str):
-        """Handle /ls command - list all projects"""
-        try:
-            projects = self.task_queue.get_projects()
-            if not projects:
-                self.send_response(response_url, "📦 No projects found")
-                return
-
-            message = "📦 Projects\n"
-            message += "```\n"
-            message += f"{'ID':<20} {'Name':<20} {'Tasks':>6} {'Status':<20}\n"
-            message += "-" * 70 + "\n"
-
-            for proj in projects:
-                proj_id = proj['project_id']
-                proj_name = proj['project_name']
-                total = proj['total_tasks']
-                pending = proj['pending']
-                in_progress = proj['in_progress']
-
-                status_parts = []
-                if pending > 0:
-                    status_parts.append(f"{pending} pending")
-                if in_progress > 0:
-                    status_parts.append(f"{in_progress} in_progress")
-                status = ", ".join(status_parts) or "idle"
-
-                message += f"{proj_id:<20} {proj_name:<20} {total:>6} {status:<20}\n"
-
-            message += "```"
-            self.send_response(response_url, message)
-
-        except Exception as e:
-            self.send_response(response_url, f"Failed to list projects: {str(e)}")
-            logger.error(f"Failed to list projects: {e}")
-
-    def handle_cat_command(self, args: str, response_url: str):
-        """Handle /cat command - show project details"""
-        try:
+            # Determine if it's a date or project
             if not args:
-                self.send_response(response_url, "Usage: /cat <project_id_or_name>")
-                return
+                # Default: today's report
+                from datetime import datetime
+                date = datetime.utcnow().strftime("%Y-%m-%d")
+                report = self.report_generator.get_daily_report(date)
+            else:
+                # Try to parse as date
+                try:
+                    from datetime import datetime
+                    datetime.strptime(args, "%Y-%m-%d")
+                    report = self.report_generator.get_daily_report(args)
+                except ValueError:
+                    # Not a date, treat as project ID
+                    report = self.report_generator.get_project_report(args)
 
-            project_id = _slugify_project(args)
-            project = self.task_queue.get_project_by_id(project_id)
+            # Truncate if too long for Slack
+            max_length = 3000
+            if len(report) > max_length:
+                report = report[:max_length] + "\n\n_[Report truncated - use CLI for full content]_"
 
-            if not project:
-                self.send_response(response_url, f"📦 Project not found: {args} (slug: {project_id})")
-                return
-
-            message = (
-                f"📦 Project: {project['project_name']} ({project['project_id']})\n"
-                f"📂 Workspace: workspace/project_{project['project_id']}/\n"
-                f"📋 Tasks: {project['total_tasks']} total\n"
-                f"  • Pending: {project['pending']}\n"
-                f"  • In Progress: {project['in_progress']}\n"
-                f"  • Completed: {project['completed']}\n"
-                f"  • Failed: {project['failed']}\n"
-                f"📅 Created: {project['created_at']}"
-            )
-
-            if project['tasks']:
-                message += "\n\nRecent tasks:\n"
-                for task in project['tasks']:
-                    status_icon = {
-                        'completed': '✓',
-                        'in_progress': '→',
-                        'pending': '○',
-                        'failed': '✗',
-                        'cancelled': '◌',
-                    }.get(task['status'], '?')
-                    message += f"  {status_icon} #{task['id']} [{task['status']}] {task['description']}\n"
-
-            self.send_response(response_url, message)
+            self.send_response(response_url, f"```{report}```")
 
         except Exception as e:
-            self.send_response(response_url, f"Failed to get project info: {str(e)}")
-            logger.error(f"Failed to get project info: {e}")
-
-    def handle_rm_command(self, args: str, response_url: str):
-        """Handle /rm command - delete a project with confirmation"""
-        try:
-            if not args:
-                self.send_response(response_url, "Usage: /rm <project_id_or_name>")
-                return
-
-            project_id = _slugify_project(args)
-            project = self.task_queue.get_project_by_id(project_id)
-
-            if not project:
-                self.send_response(response_url, f"📦 Project not found: {args} (slug: {project_id})")
-                return
-
-            message = (
-                f"⚠️ About to delete project '{project['project_name']}' ({project_id})\n"
-                f"This will delete {project['total_tasks']} task(s)\n"
-                f"\n"
-                f"To confirm, use:\n"
-                f"`/rm {project_id} confirm`"
-            )
-            self.send_response(response_url, message)
-
-        except Exception as e:
-            self.send_response(response_url, f"Failed to delete project: {str(e)}")
-            logger.error(f"Failed to delete project: {e}")
+            self.send_response(response_url, f"Failed to get report: {str(e)}")
+            logger.error(f"Failed to get report: {e}")

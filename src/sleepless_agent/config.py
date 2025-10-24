@@ -27,6 +27,26 @@ class ClaudeCodeConfig(BaseSettings):
     preserve_serious_workspaces: bool = True  # Keep serious task workspaces for debugging
 
 
+class AutoGenerationConfig(BaseSettings):
+    """Auto-task generation configuration"""
+    enabled: bool = True  # Enable automatic task generation
+    usage_threshold_percent: int = 60  # Generate tasks when usage < X% of daily budget
+    budget_ceiling_percent: int = 85  # Stop generation when usage >= X% of daily budget
+    rate_limit_night: int = 2  # Tasks per hour (night: 8PM-8AM)
+    rate_limit_day: int = 1  # Tasks per hour (day: 8AM-8PM)
+
+    # Task source weights (percentages, should sum to 100)
+    source_weights: dict = {
+        "pool": 30,  # Predefined task pool
+        "code": 25,  # Code analysis (TODOs, tech debt)
+        "ai": 25,    # AI-generated ideas
+        "backlog": 20  # Project backlog (GitHub issues, etc.)
+    }
+
+    # Task type distribution
+    random_ratio: float = 0.6  # 60% RANDOM tasks, 40% SERIOUS
+
+
 class AgentConfig(BaseSettings):
     """Agent configuration"""
     workspace_root: Path = Path("./workspace")  # Root for isolated task workspaces
@@ -42,6 +62,7 @@ class Config(BaseSettings):
     slack: SlackConfig
     claude_code: ClaudeCodeConfig
     agent: AgentConfig
+    auto_generation: AutoGenerationConfig
 
     class Config:
         env_nested_delimiter = "__"
@@ -50,11 +71,13 @@ class Config(BaseSettings):
         slack_config = SlackConfig()
         claude_code_config = ClaudeCodeConfig()
         agent_config = AgentConfig()
+        auto_generation_config = AutoGenerationConfig()
 
         super().__init__(
             slack=slack_config,
             claude_code=claude_code_config,
             agent=agent_config,
+            auto_generation=auto_generation_config,
             **data
         )
 

@@ -138,6 +138,17 @@ class BudgetManager:
         remaining = self.get_remaining_budget()
         return remaining >= estimated_cost
 
+    def get_usage_percent(self) -> int:
+        """Get current usage as percentage of current quota (0-100)"""
+        quota = self.get_current_quota()
+        usage = self.get_current_time_period_usage()
+
+        if quota == 0:
+            return 0
+
+        percent = (usage / quota) * 100
+        return min(100, int(percent))
+
     def get_budget_status(self) -> dict:
         """Get comprehensive budget status"""
         is_night = TimeOfDay.is_nighttime()

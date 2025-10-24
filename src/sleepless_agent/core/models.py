@@ -39,6 +39,7 @@ class Task(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
+    deleted_at = Column(DateTime, nullable=True)
 
     # Execution details
     attempt_count = Column(Integer, default=0, nullable=False)
@@ -107,6 +108,37 @@ class UsageMetric(Base):
 
     def __repr__(self):
         return f"<UsageMetric(id={self.id}, task_id={self.task_id}, cost=${self.total_cost_usd})>"
+
+
+class TaskPool(Base):
+    """Predefined pool of tasks for auto-generation"""
+    __tablename__ = "task_pool"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    description = Column(Text, nullable=False)
+    priority = Column(SQLEnum(TaskPriority), default=TaskPriority.RANDOM, nullable=False)
+    category = Column(String(100), nullable=True)  # e.g., "refactor", "optimization", "testing"
+    used = Column(Integer, default=0, nullable=False)  # How many times used
+    project_id = Column(String(255), nullable=True)  # Optional project association
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def __repr__(self):
+        return f"<TaskPool(id={self.id}, priority={self.priority}, category={self.category})>"
+
+
+class GenerationHistory(Base):
+    """Track auto-generated tasks and their sources"""
+    __tablename__ = "generation_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(Integer, nullable=False)  # Reference to created Task
+    source = Column(String(50), nullable=False)  # "pool", "code", "ai", "backlog"
+    usage_percent_at_generation = Column(Integer, nullable=False)  # Budget usage % when generated
+    source_metadata = Column(Text, nullable=True)  # JSON with source-specific info
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def __repr__(self):
+        return f"<GenerationHistory(task_id={self.task_id}, source={self.source})>"
 
 
 def init_db(db_path: str) -> Session:

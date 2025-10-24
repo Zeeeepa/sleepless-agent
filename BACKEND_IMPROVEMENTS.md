@@ -107,12 +107,7 @@ self.scheduler = SmartScheduler(
 ```
 
 ### Checking Budget Status
-**Via Slack:**
-```
-/credits
-```
-
-**Response:**
+Expose the scheduler's `get_credit_status()` via logs or monitoring dashboards. Example output:
 ```
 💳 Usage & Budget Status
 
@@ -167,7 +162,7 @@ Failed: 2
 6. **`interfaces/bot.py`**
    - Updated `/task` command to support `--project=<name>` flag
    - Updated `_create_task()` to accept and process `project_name`
-   - Enhanced `/credits` command to show budget status
+   - Added helper to format budget status responses for future surfacing
 
 ### Backward Compatibility
 
@@ -245,11 +240,7 @@ if not self.budget_manager.is_budget_available():
 All three tasks work in `workspace/project_my-dashboard/`, building on each other's work.
 
 ### Example 2: Check Budget During Night
-```bash
-/credits
-```
-
-Response:
+Review scheduler logs (e.g., `tail -f logs/agent.log | grep Budget`). Example output:
 ```
 💳 Usage & Budget Status
 
@@ -329,7 +320,7 @@ NIGHT_END_HOUR = 6     # 6 AM
 
 ### View Budget Status
 ```bash
-/credits  # Shows budget, usage, queue status
+tail -f logs/agent.log | grep "Budget Status"
 ```
 
 ### View Project Costs (future enhancement)
