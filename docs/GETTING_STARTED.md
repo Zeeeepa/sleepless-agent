@@ -37,7 +37,7 @@ Settings > Slash Commands > Create New Command
 Add these commands:
 - `/task` → Request URL: (leave empty for Socket Mode)
 - `/think`
-- `/status`
+- `/check`
 - `/report`
 - `/cancel`
 - `/trash`
@@ -102,7 +102,7 @@ INFO - Sleepless Agent starting...
 
 **Morning Check:**
 ```
-/status        # See overnight progress and system health
+/check         # See overnight progress and system health
 /report --list # Browse available reports
 ```
 
@@ -151,7 +151,7 @@ sleepless --db-path ./workspace/data/tasks.db --results-path ./workspace/data/re
 ```
 ┌─────────────────────────────────────────┐
 │         Slack Interface                 │
-│  /task /status /report /trash ...       │
+│  /task /check /report /trash ...        │
 └────────────────────┬────────────────────┘
                      │
         ┌────────────▼────────────┐
@@ -274,7 +274,7 @@ sleepless status
 /think Some interesting idea 1
 /think Some interesting idea 2
 /think Some interesting idea 3
-/status              # Monitor progress
+/check              # Monitor progress
 ```
 
 ### Submit Serious Job with Context
