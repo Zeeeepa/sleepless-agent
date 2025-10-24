@@ -32,6 +32,8 @@ dependencies = [
     "aiosqlite",
     "loguru",
     "rich",
+    "psutil",
+    "claude-agent-sdk",
 ]
 
 [project.scripts]
