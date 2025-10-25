@@ -147,7 +147,7 @@ class AutoTaskGenerator:
         weighted_list: list[AutoTaskPromptConfig] = []
 
         for prompt in prompts:
-            weight = max(int(prompt.weight or 0), 0)
+            weight = max(int(prompt.weight * 10 or 0), 0)  # Scale by 10 for decimal weights
             if weight <= 0:
                 continue
             weighted_list.extend([prompt] * weight)
