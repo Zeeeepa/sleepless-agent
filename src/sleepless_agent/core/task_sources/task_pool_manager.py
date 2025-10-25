@@ -2,7 +2,9 @@
 
 from typing import Dict, List, Optional
 
-from loguru import logger
+from sleepless_agent.logging import get_logger
+logger = get_logger(__name__)
+
 from sqlalchemy.orm import Session
 
 from sleepless_agent.core.models import TaskPool, TaskPriority

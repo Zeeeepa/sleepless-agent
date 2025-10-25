@@ -52,8 +52,7 @@ class ProPlanMonitoringConfig(BaseSettings):
     """Pro plan usage monitoring configuration
 
     Controls Claude Code Pro plan usage tracking and task scheduling decisions.
-    The system monitors your Pro plan message limit (typically 40/5hr window) and
-    automatically pauses new task generation when usage exceeds the pause_threshold.
+    Automatically pauses new task generation when usage exceeds the pause_threshold.
     """
     enabled: bool = True
     pause_threshold: float = 85.0  # Stop generating new tasks when usage >= 85% of limit
@@ -69,9 +68,9 @@ class ProPlanMonitoringConfig(BaseSettings):
 class MultiAgentWorkflowConfig(BaseSettings):
     """Multi-agent workflow configuration"""
     enabled: bool = True
-    planner: MultiAgentPhaseConfig = Field(default_factory=lambda: MultiAgentPhaseConfig(max_turns=10, timeout_seconds=300))
-    worker: MultiAgentPhaseConfig = Field(default_factory=lambda: MultiAgentPhaseConfig(max_turns=30, timeout_seconds=1800))
-    evaluator: MultiAgentPhaseConfig = Field(default_factory=lambda: MultiAgentPhaseConfig(max_turns=10, timeout_seconds=300))
+    planner: MultiAgentPhaseConfig = Field(default_factory=lambda: MultiAgentPhaseConfig(max_turns=3, timeout_seconds=300))
+    worker: MultiAgentPhaseConfig = Field(default_factory=lambda: MultiAgentPhaseConfig(max_turns=3, timeout_seconds=1800))
+    evaluator: MultiAgentPhaseConfig = Field(default_factory=lambda: MultiAgentPhaseConfig(max_turns=3, timeout_seconds=300))
     readme: MultiAgentReadmeConfig = Field(default_factory=MultiAgentReadmeConfig)
     plan: MultiAgentPlanConfig = Field(default_factory=MultiAgentPlanConfig)
     pro_plan_monitoring: ProPlanMonitoringConfig = Field(default_factory=ProPlanMonitoringConfig)

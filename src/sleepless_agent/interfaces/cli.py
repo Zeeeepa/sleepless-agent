@@ -12,7 +12,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from loguru import logger
+from sleepless_agent.logging import get_logger
+logger = get_logger(__name__)
+
 from rich import box
 from rich.align import Align
 from rich.console import Console
@@ -137,9 +139,10 @@ def command_check(ctx: CLIContext) -> int:
     pro_plan_usage_info = ""
     try:
         from sleepless_agent.monitoring.pro_plan_usage import ProPlanUsageChecker
-        checker = ProPlanUsageChecker(command=config.multi_agent_workflow.pro_plan_monitoring.usage_command)
-        messages_used, messages_limit, _ = checker.get_usage()
-        usage_percent = (messages_used / messages_limit * 100) if messages_limit > 0 else 0
+        checker = ProPlanUsageChecker(
+            command=config.multi_agent_workflow.pro_plan_monitoring.usage_command,
+        )
+        usage_percent, _ = checker.get_usage()
         threshold = config.multi_agent_workflow.pro_plan_monitoring.pause_threshold
         pro_plan_usage_info = f" • Pro Usage: {usage_percent:.0f}% / {threshold:.0f}% limit"
     except Exception as exc:

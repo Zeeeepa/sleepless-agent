@@ -4,7 +4,9 @@ import json
 from datetime import datetime, timedelta
 from typing import Callable, List, Optional, TypeVar
 
-from loguru import logger
+from sleepless_agent.logging import get_logger
+logger = get_logger(__name__)
+
 from sqlalchemy import case, create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.exc import OperationalError

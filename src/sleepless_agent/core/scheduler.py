@@ -4,7 +4,9 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import List, Optional, Tuple
 
-from loguru import logger
+from sleepless_agent.logging import get_logger
+logger = get_logger(__name__)
+
 from sqlalchemy.orm import Session
 
 from .models import Task, TaskPriority, TaskStatus, UsageMetric
@@ -293,19 +295,29 @@ class SmartScheduler:
         # Try live usage check first
         if self.use_live_usage_check and self.usage_checker:
             try:
-                messages_used, messages_limit, reset_time = self.usage_checker.get_usage()
-                usage_percent = (messages_used / messages_limit * 100) if messages_limit > 0 else 0
+                usage_percent, reset_time = self.usage_checker.get_usage()
 
                 if usage_percent >= self.pause_threshold_percent:
-                    pause_base = reset_time if reset_time > now else now + self._usage_pause_default
+                    pause_base = (
+                        reset_time
+                        if reset_time and reset_time > now
+                        else now + self._usage_pause_default
+                    )
                     pause_until = pause_base + self._usage_pause_grace
                     self.usage_pause_until = pause_until
                     remaining = pause_until - now
-                    message = (
-                        f"Pro plan usage at {usage_percent:.0f}% exceeds threshold {self.pause_threshold_percent:.0f}%; "
-                        f"waiting for reset at {reset_time.strftime('%H:%M:%S')} "
-                        f"(resume in {self._format_remaining(remaining)})"
-                    )
+                    if reset_time:
+                        message = (
+                            f"Pro plan usage at {usage_percent:.0f}% exceeds threshold "
+                            f"{self.pause_threshold_percent:.0f}%; waiting for reset at "
+                            f"{reset_time.strftime('%H:%M:%S')} (resume in {self._format_remaining(remaining)})"
+                        )
+                    else:
+                        message = (
+                            f"Pro plan usage at {usage_percent:.0f}% exceeds threshold "
+                            f"{self.pause_threshold_percent:.0f}%; retrying after "
+                            f"{self._format_remaining(remaining)}"
+                        )
                     return False, message
                 else:
                     self.usage_pause_until = None
@@ -399,9 +411,10 @@ class SmartScheduler:
         if pending:
             if self.use_live_usage_check and self.usage_checker:
                 try:
-                    messages_used, messages_limit, _ = self.usage_checker.get_usage()
-                    usage_percent = (messages_used / messages_limit * 100) if messages_limit > 0 else 0
-                    logger.info(f"Scheduling {len(pending)} task(s) (Pro plan usage: {usage_percent:.0f}%)")
+                    usage_percent, _ = self.usage_checker.get_usage()
+                    logger.info(
+                        f"Scheduling {len(pending)} task(s) (Pro plan usage: {usage_percent:.0f}%)"
+                    )
                 except Exception:
                     # Fall back to budget info if usage check fails
                     budget_status = self.budget_manager.get_budget_status()

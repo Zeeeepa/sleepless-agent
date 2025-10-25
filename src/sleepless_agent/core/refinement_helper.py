@@ -6,7 +6,9 @@ import json
 from datetime import datetime, timedelta
 from typing import Optional, Sequence
 
-from loguru import logger
+from sleepless_agent.logging import get_logger
+logger = get_logger(__name__)
+
 from sqlalchemy.orm import Session
 
 from sleepless_agent.core.models import GenerationHistory, Task, TaskPriority, TaskStatus
@@ -128,4 +130,3 @@ def find_recent_completed_tasks(session: Session, hours: int = 24) -> list[Task]
         .all()
     )
     return tasks
-

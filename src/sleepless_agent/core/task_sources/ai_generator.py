@@ -14,7 +14,8 @@ from claude_agent_sdk import (
     CLIConnectionError,
     CLIJSONDecodeError,
 )
-from loguru import logger
+from sleepless_agent.logging import get_logger
+logger = get_logger(__name__)
 
 
 class AITaskGenerator:

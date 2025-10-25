@@ -5,7 +5,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Optional
 
-from loguru import logger
+from sleepless_agent.logging import get_logger
+logger = get_logger(__name__)
 
 
 class ToolExecutor:
