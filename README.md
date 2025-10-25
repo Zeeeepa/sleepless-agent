@@ -11,7 +11,7 @@ A 24/7 AI assistant daemon that continuously works on tasks via Slack. Uses Clau
 
 ## Full Precedure
 
-  1. Command arrives via CLI (sleepless task "...") or Slack (/task ...)
+  1. Command arrives via CLI (sle task "...") or Slack (/task ...)
   2. TaskQueue stores it in SQLite database with status PENDING
   3. Daemon polls every 5 seconds, calling _process_tasks()
   4. SmartScheduler decides if task can execute:
@@ -120,7 +120,7 @@ Set:
 
 ```bash
 # Terminal 1: Start the daemon
-sleepless daemon
+sle daemon
 
 # Terminal 2 (optional): Monitor logs
 tail -f workspace/data/agent.log
@@ -176,7 +176,7 @@ Install the project (or run within the repo) and use the bundled CLI:
 ```bash
 python -m sleepless_agent.interfaces.cli task "Ship release checklist"
 # or, after installing the package:
-sleepless check
+sle check
 ```
 
 The CLI mirrors the Slack slash commands:
@@ -193,7 +193,7 @@ The CLI mirrors the Slack slash commands:
 Override storage locations when needed:
 
 ```bash
-sleepless --db-path ./tmp/tasks.db --results-path ./tmp/results status
+sle --db-path ./tmp/tasks.db --results-path ./tmp/results status
 ```
 
 ## Architecture
@@ -278,7 +278,7 @@ The agent automatically monitors your Claude Code Pro plan usage and prevents ta
 ```
 
 **Visibility:**
-- Dashboard: Shows `Pro Usage: X% / 85% limit` in `sleepless check`
+- Dashboard: Shows `Pro Usage: X% / 85% limit` in `sle check`
 - Logs: Each usage check logs `Pro plan usage: X/40 (Y% / 85% pause threshold)`
 - Config: Adjustable via `ProPlanMonitoringConfig.pause_threshold` (default: 85.0)
 
@@ -419,7 +419,7 @@ launchctl list | grep sleepless
 |-------|----------|
 | Bot not responding | Check `.env` tokens, verify Socket Mode enabled, check logs: `tail -f workspace/data/agent.log` |
 | Tasks not executing | Verify Claude Code CLI installed: `npm list -g @anthropic-ai/claude-code`, check workspace permissions |
-| Tasks paused (85% threshold) | Usage has reached 85% of Pro plan limit. Wait for window reset (check logs for reset time), or adjust threshold in config: `ProPlanMonitoringConfig.pause_threshold`. Run `sleepless check` to see current usage. |
+| Tasks paused (85% threshold) | Usage has reached 85% of Pro plan limit. Wait for window reset (check logs for reset time), or adjust threshold in config: `ProPlanMonitoringConfig.pause_threshold`. Run `sle check` to see current usage. |
 | Git commits fail | Install `gh` CLI and authenticate: `gh auth login` |
 | Out of credits | Wait for 5-hour window refresh. Review scheduler logs: `tail -f workspace/data/agent.log | grep credit` |
 | Database locked | Close other connections, try: `rm workspace/data/tasks.db && python -m sleepless_agent.daemon` |
@@ -430,7 +430,7 @@ launchctl list | grep sleepless
 2. **Batch serious jobs** - Reduces context switching
 3. **Monitor credits** - Watch scheduler logs for window resets
 4. **Review git history** - Check `random-ideas` branch regularly
-5. **Check metrics** - Run `sleepless check` to track performance
+5. **Check metrics** - Run `sle check` to track performance
 
 ## Security Notes
 

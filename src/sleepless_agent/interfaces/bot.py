@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Optional
 
-from sleepless_agent.logging import get_logger
+from sleepless_agent.monitoring.logging import get_logger
 logger = get_logger(__name__)
 
 from slack_sdk import WebClient
@@ -13,11 +13,11 @@ from slack_sdk.socket_mode import SocketModeClient
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
 
-from sleepless_agent.workspaces.display import format_age_seconds, format_duration, relative_time, shorten
-from sleepless_agent.tasks.models import TaskPriority, TaskStatus
-from sleepless_agent.tasks.queue import TaskQueue
+from sleepless_agent.utils.display import format_age_seconds, format_duration, relative_time, shorten
+from sleepless_agent.core.models import TaskPriority, TaskStatus
+from sleepless_agent.core.queue import TaskQueue
 from sleepless_agent.tasks.utils import prepare_task_creation
-from sleepless_agent.workspaces.live_status import LiveStatusTracker
+from sleepless_agent.utils.live_status import LiveStatusTracker
 from sleepless_agent.monitoring.report_generator import ReportGenerator
 
 

@@ -11,18 +11,19 @@ from pathlib import Path
 from sqlalchemy.orm import sessionmaker
 
 from sleepless_agent.config import get_config
-from sleepless_agent.persistence.results import ResultManager
+from sleepless_agent.storage.results import ResultManager
 from sleepless_agent.scheduling.auto_generator import AutoTaskGenerator
 from sleepless_agent.scheduling.scheduler import BudgetManager, SmartScheduler
-from sleepless_agent.tasks.models import TaskPriority, init_db
-from sleepless_agent.tasks.queue import TaskQueue
-from sleepless_agent.runtime.services import TaskRuntime, TaskTimeoutManager
-from sleepless_agent.workspaces.executor import ClaudeCodeExecutor
-from sleepless_agent.workspaces.git import GitManager
-from sleepless_agent.workspaces.live_status import LiveStatusTracker
-from sleepless_agent.workspaces.workspace import WorkspaceSetup
+from sleepless_agent.core.models import TaskPriority, init_db
+from sleepless_agent.core.queue import TaskQueue
+from sleepless_agent.core.task_runtime import TaskRuntime
+from sleepless_agent.core.timeout_manager import TaskTimeoutManager
+from sleepless_agent.core.executor import ClaudeCodeExecutor
+from sleepless_agent.storage.git import GitManager
+from sleepless_agent.utils.live_status import LiveStatusTracker
+from sleepless_agent.storage.workspace import WorkspaceSetup
 from sleepless_agent.interfaces.bot import SlackBot
-from sleepless_agent.logging import get_logger
+from sleepless_agent.monitoring.logging import get_logger
 from sleepless_agent.monitoring.monitor import HealthMonitor, PerformanceLogger
 from sleepless_agent.monitoring.report_generator import ReportGenerator
 

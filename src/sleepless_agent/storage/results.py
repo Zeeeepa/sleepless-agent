@@ -9,9 +9,9 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from sleepless_agent.logging import get_logger
-from sleepless_agent.persistence.sqlite import SQLiteStore
-from sleepless_agent.tasks.models import Result
+from sleepless_agent.monitoring.logging import get_logger
+from sleepless_agent.storage.sqlite import SQLiteStore
+from sleepless_agent.core.models import Result
 
 logger = get_logger(__name__)
 

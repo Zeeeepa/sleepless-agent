@@ -21,10 +21,10 @@ setup:
 	@echo "✓ Setup complete. Edit .env with your tokens"
 
 run:
-	sleepless daemon
+	sle daemon
 
 dev:
-	PYTHONUNBUFFERED=1 sleepless daemon
+	PYTHONUNBUFFERED=1 sle daemon
 
 logs:
 	tail -f workspace/data/agent.log

@@ -18,11 +18,11 @@ from claude_agent_sdk import (
 )
 from sqlalchemy.orm import Session
 
-from sleepless_agent.logging import get_logger
+from sleepless_agent.monitoring.logging import get_logger
 
 logger = get_logger(__name__)
 
-from sleepless_agent.tasks.models import Task, TaskPriority, TaskStatus, TaskType, GenerationHistory
+from sleepless_agent.core.models import Task, TaskPriority, TaskStatus, TaskType, GenerationHistory
 from sleepless_agent.scheduling.scheduler import BudgetManager
 from sleepless_agent.scheduling.time_utils import rate_limit_for_time
 from sleepless_agent.config import AutoGenerationConfig, AutoTaskPromptConfig

@@ -3,12 +3,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sleepless_agent.logging import get_logger
+from sleepless_agent.monitoring.logging import get_logger
 
-from sleepless_agent.tasks.queue import TaskQueue
+from sleepless_agent.core.queue import TaskQueue
 from sleepless_agent.monitoring.monitor import HealthMonitor, PerformanceLogger
 from sleepless_agent.monitoring.report_generator import ReportGenerator, TaskMetrics
-from sleepless_agent.workspaces.executor import ClaudeCodeExecutor
+from sleepless_agent.core.executor import ClaudeCodeExecutor
 from sleepless_agent.interfaces.bot import SlackBot
 
 logger = get_logger(__name__)
