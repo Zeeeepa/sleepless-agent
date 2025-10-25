@@ -129,9 +129,18 @@ tail -f workspace/data/agent.log
 You should see startup logs similar to:
 ```
 2025-10-24 23:30:12 | INFO     | sleepless_agent.interfaces.bot.start:50 Slack bot started and listening for events
-2025-10-24 23:30:12 | INFO     | sleepless_agent.core.daemon.run:178 Sleepless Agent starting...
+2025-10-24 23:30:12 | INFO     | sleepless_agent.runtime.daemon.run:178 Sleepless Agent starting...
 ```
 Logs are rendered with Rich for readability; set `SLEEPLESS_LOG_LEVEL=DEBUG` to increase verbosity.
+
+### Logging
+
+Rich console output is powered by [Rich](https://rich.readthedocs.io/) and now mirrors the structured events that feed our JSON logs. Every console line maps to a canonical `event` (for example `task.phase.done`, `scheduler.dispatch`, `usage.snapshot`) so you can skim the terminal or process the data programmatically.
+
+Structured copies of each log line are written to JSONL files under `workspace/.logs` by default (override with `SLEEPLESS_LOG_DIR`). These files preserve context such as `task_id`, `phase`, `usage_percent`, and timing deltas, making it easy to build dashboards or run ad-hoc analysis later.
+
+Set `SLEEPLESS_LOG_LEVEL` to tune verbosity; `DEBUG` includes low-level worker/evaluator metrics while `INFO` keeps to lifecycle milestones.
+
 
 ## Slack Commands
 
@@ -299,6 +308,7 @@ AGENT_RESULTS_PATH=./workspace/data/results
 GIT_USER_NAME=Sleepless Agent
 GIT_USER_EMAIL=agent@sleepless.local
 SLEEPLESS_LOG_LEVEL=INFO
+SLEEPLESS_LOG_DIR=workspace/.logs
 ```
 
 ## Task Types

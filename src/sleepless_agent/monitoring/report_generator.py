@@ -5,6 +5,7 @@ from typing import Optional, Dict, List
 from dataclasses import dataclass
 
 from sleepless_agent.logging import get_logger
+
 logger = get_logger(__name__)
 
 
@@ -77,7 +78,7 @@ class ReportGenerator:
 
             report_file.write_text(new_content)
         except Exception as e:
-            logger.error(f"Failed to append to daily report: {e}")
+            logger.error("report.daily.append_failed", error=str(e), path=str(report_file))
 
     def _format_task_entry(self, task_metrics: TaskMetrics, status_emoji: str, timestamp: str) -> str:
         """Format task entry for markdown"""
@@ -117,7 +118,7 @@ class ReportGenerator:
                 new_content = content + f"\n{entry}"
             project_file.write_text(new_content)
         except Exception as exc:
-            logger.error(f"Failed to append to project report {task_metrics.project_id}: {exc}")
+            logger.error("report.project.append_failed", project=task_metrics.project_id, path=str(project_file), error=str(exc))
 
     def summarize_daily_report(self, date: Optional[str] = None):
         """Generate end-of-day summary for daily report
@@ -130,7 +131,7 @@ class ReportGenerator:
 
         report_file = self.daily_dir / f"{date}.md"
         if not report_file.exists():
-            logger.warning(f"Report not found: {report_file}")
+            logger.warning("report.daily.missing", path=str(report_file))
             return
 
         try:
@@ -153,16 +154,16 @@ class ReportGenerator:
                 new_content = content + "\n" + summary_text
 
             report_file.write_text(new_content)
-            logger.info(f"Summarized daily report: {date}")
+            logger.info("report.daily.summarized", date=date)
 
         except Exception as e:
-            logger.error(f"Failed to summarize report: {e}")
+            logger.error("report.daily.summary_failed", date=date, error=str(e))
 
     def summarize_project_report(self, project_id: str):
         """Summarize a project-level report."""
         report_file = self.projects_dir / f"{project_id}.md"
         if not report_file.exists():
-            logger.debug(f"No project report found for {project_id}")
+            logger.debug("report.project.missing", project=project_id)
             return
 
         try:
@@ -182,7 +183,7 @@ class ReportGenerator:
 
             report_file.write_text(new_content)
         except Exception as exc:
-            logger.error(f"Failed to summarize project report {project_id}: {exc}")
+            logger.error("report.project.summary_failed", project=project_id, error=str(exc))
 
     def _extract_summary_stats(self, content: str) -> Dict:
         """Extract statistics from report content"""
@@ -253,15 +254,18 @@ class ReportGenerator:
 
     def _ensure_daily_report_header(self, report_file: Path, date: str):
         """Ensure daily report has proper header"""
-        if not report_file.exists():
-            date_obj = datetime.strptime(date, "%Y-%m-%d")
-            formatted_date = date_obj.strftime("%A, %B %d, %Y")
+        if report_file.exists():
+            return
 
-            header = f"# Daily Report - {formatted_date}\n\n"
-            header += f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
-            header += "## Tasks\n\n"
-            header += "## Summary\n\n"
+        date_obj = datetime.strptime(date, "%Y-%m-%d")
+        formatted_date = date_obj.strftime("%A, %B %d, %Y")
+
+        header = f"# Daily Report - {formatted_date}\n\n"
+        header += f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
+        header += "## Tasks\n\n"
+        header += "## Summary\n\n"
         report_file.write_text(header)
+        logger.debug("report.daily.header_created", path=str(report_file))
 
     def get_daily_report_path(self, date: Optional[datetime] = None) -> Path:
         """Return the filesystem path for the daily report."""
@@ -314,9 +318,9 @@ class ReportGenerator:
 
                 if report_date < cutoff:
                     report_file.unlink()
-                    logger.info(f"Deleted old report: {date_str}")
+                    logger.info("report.daily.deleted", date=date_str)
             except Exception as e:
-                logger.error(f"Failed to clean report {report_file}: {e}")
+                logger.error("report.daily.cleanup_failed", path=str(report_file), error=str(e))
 
     def update_recent_reports(self, retain: int = 7) -> None:
         """Update the recent reports index with the latest daily reports."""
@@ -327,7 +331,7 @@ class ReportGenerator:
         try:
             self.recent_index.write_text("\n".join(lines) + "\n")
         except Exception as exc:
-            logger.error(f"Failed to update recent reports index: {exc}")
+            logger.error("report.recent.update_failed", error=str(exc))
 
     def _ensure_project_report_header(self, report_file: Path, project_id: str) -> None:
         """Ensure a project report is initialized with a header."""
@@ -338,3 +342,8 @@ class ReportGenerator:
         header += "## Tasks\n\n"
         header += "## Summary\n\n"
         report_file.write_text(header)
+        logger.debug(
+            "report.project.header_created",
+            path=str(report_file),
+            project=project_id,
+        )

@@ -2,37 +2,21 @@
 
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import List, Optional, Tuple
-
-from sleepless_agent.logging import get_logger
-logger = get_logger(__name__)
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
-from .models import Task, TaskPriority, TaskStatus, UsageMetric
-from .task_queue import TaskQueue
+from sleepless_agent.scheduling.time_utils import (
+    current_period_start,
+    get_time_label,
+    is_nighttime,
+)
+from sleepless_agent.logging import get_logger
 
+from sleepless_agent.tasks.models import Task, TaskPriority, TaskStatus, UsageMetric
+from sleepless_agent.tasks.queue import TaskQueue
 
-class TimeOfDay:
-    """Classify time of day for budget allocation"""
-
-    NIGHT_START_HOUR = 20  # 8 PM
-    NIGHT_END_HOUR = 8  # 8 AM
-
-    @classmethod
-    def is_nighttime(cls, dt: Optional[datetime] = None) -> bool:
-        """Check if given datetime is nighttime (8 PM - 8 AM)"""
-        if dt is None:
-            dt = datetime.utcnow()
-
-        hour = dt.hour
-        # Night: 20-23 or 0-7
-        return hour >= cls.NIGHT_START_HOUR or hour < cls.NIGHT_END_HOUR
-
-    @classmethod
-    def get_time_label(cls, dt: Optional[datetime] = None) -> str:
-        """Get human-readable time label"""
-        return "night" if cls.is_nighttime(dt) else "daytime"
+logger = get_logger(__name__)
 
 
 class BudgetManager:
@@ -78,7 +62,11 @@ class BudgetManager:
                 try:
                     total += Decimal(metric.total_cost_usd)
                 except Exception as e:
-                    logger.warning(f"Failed to parse cost {metric.total_cost_usd}: {e}")
+                    logger.warning(
+                        "budget.parse_cost_failed",
+                        cost=metric.total_cost_usd,
+                        error=str(e),
+                    )
 
         return total
 
@@ -89,32 +77,12 @@ class BudgetManager:
 
     def get_current_time_period_usage(self) -> Decimal:
         """Get usage for current time period (night or day)"""
-        now = datetime.utcnow()
-        is_night = TimeOfDay.is_nighttime(now)
-
-        if is_night:
-            # Night period: either from 8 PM yesterday or midnight today
-            today = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            night_start = today.replace(hour=TimeOfDay.NIGHT_START_HOUR)
-
-            # If before 8 AM, night started yesterday
-            if now.hour < TimeOfDay.NIGHT_END_HOUR:
-                night_start = (today - timedelta(days=1)).replace(
-                    hour=TimeOfDay.NIGHT_START_HOUR
-                )
-
-            return self.get_usage_in_period(night_start)
-        else:
-            # Day period: 8 AM to 8 PM today
-            today = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            day_start = today.replace(hour=TimeOfDay.NIGHT_END_HOUR)
-            return self.get_usage_in_period(day_start)
+        period_start = current_period_start(datetime.utcnow())
+        return self.get_usage_in_period(period_start)
 
     def get_current_quota(self) -> Decimal:
         """Get budget quota for current time period"""
-        is_night = TimeOfDay.is_nighttime()
-
-        if is_night:
+        if is_nighttime():
             quota = self.daily_budget_usd * (self.night_quota_percent / Decimal("100"))
         else:
             quota = self.daily_budget_usd * (self.day_quota_percent / Decimal("100"))
@@ -153,8 +121,8 @@ class BudgetManager:
 
     def get_budget_status(self) -> dict:
         """Get comprehensive budget status"""
-        is_night = TimeOfDay.is_nighttime()
-        time_label = TimeOfDay.get_time_label()
+        is_night = is_nighttime()
+        time_label = get_time_label()
 
         quota = self.get_current_quota()
         usage = self.get_current_time_period_usage()
@@ -248,9 +216,12 @@ class SmartScheduler:
             try:
                 from sleepless_agent.monitoring.pro_plan_usage import ProPlanUsageChecker
                 self.usage_checker = ProPlanUsageChecker(command=usage_command)
-                logger.info("Initialized live Pro plan usage checker")
+                logger.info(
+                    "scheduler.usage_checker.ready",
+                    command=usage_command,
+                )
             except ImportError:
-                logger.warning("ProPlanUsageChecker not available, will fall back to budget-based check")
+                logger.warning("scheduler.usage_checker.unavailable")
                 self.use_live_usage_check = False
 
         # Legacy credit window support
@@ -271,24 +242,32 @@ class SmartScheduler:
         if not self.current_window or not self.current_window.is_active():
             self.current_window = CreditWindow(start_time=now)
             self.active_windows.append(self.current_window)
-            logger.info(f"New credit window started: {self.current_window}")
+            logger.info(
+                "scheduler.credit_window.new",
+                window_start=self.current_window.start_time.isoformat(),
+                window_end=self.current_window.end_time.isoformat(),
+                minutes_left=self.current_window.time_remaining_minutes(),
+            )
 
-    def _check_scheduling_allowed(self) -> Tuple[bool, str]:
+    def _check_scheduling_allowed(self) -> Tuple[bool, Dict[str, Any]]:
         """Check if scheduling is allowed based on usage/budget
 
         Returns:
-            Tuple of (should_schedule: bool, status_message: str)
+            Tuple of (should_schedule: bool, context: dict)
         """
         now = datetime.utcnow()
 
         if self.use_live_usage_check and self.usage_pause_until:
             if now < self.usage_pause_until:
                 remaining = self.usage_pause_until - now
-                message = (
-                    f"Waiting for Pro plan reset at {self.usage_pause_until.strftime('%H:%M:%S')} "
-                    f"({self._format_remaining(remaining)} remaining)"
-                )
-                return False, message
+                context = {
+                    "event": "scheduler.pause.pending",
+                    "reason": "usage_pause",
+                    "resume_at": self.usage_pause_until.isoformat(),
+                    "remaining_seconds": int(remaining.total_seconds()),
+                    "detail": self._format_remaining(remaining),
+                }
+                return False, context
             # Pause window has expired; resume normal checks.
             self.usage_pause_until = None
 
@@ -306,25 +285,27 @@ class SmartScheduler:
                     pause_until = pause_base + self._usage_pause_grace
                     self.usage_pause_until = pause_until
                     remaining = pause_until - now
-                    if reset_time:
-                        message = (
-                            f"Pro plan usage at {usage_percent:.0f}% exceeds threshold "
-                            f"{self.pause_threshold_percent:.0f}%; waiting for reset at "
-                            f"{reset_time.strftime('%H:%M:%S')} (resume in {self._format_remaining(remaining)})"
-                        )
-                    else:
-                        message = (
-                            f"Pro plan usage at {usage_percent:.0f}% exceeds threshold "
-                            f"{self.pause_threshold_percent:.0f}%; retrying after "
-                            f"{self._format_remaining(remaining)}"
-                        )
-                    return False, message
+                    context = {
+                        "event": "scheduler.pause.usage_threshold",
+                        "reason": "usage_threshold",
+                        "usage_percent": usage_percent,
+                        "threshold_percent": self.pause_threshold_percent,
+                        "resume_at": pause_until.isoformat(),
+                        "reset_at": reset_time.isoformat() if reset_time else None,
+                        "remaining_seconds": int(remaining.total_seconds()),
+                        "detail": self._format_remaining(remaining),
+                    }
+                    return False, context
                 else:
                     self.usage_pause_until = None
-                    return True, f"Pro plan usage at {usage_percent:.0f}% - ready to schedule"
+                    return True, {
+                        "event": "scheduler.usage.ok",
+                        "reason": "usage_ok",
+                        "usage_percent": usage_percent,
+                    }
 
             except Exception as e:
-                logger.debug(f"Live usage check failed, falling back to budget-based check: {e}")
+                logger.debug("scheduler.usage.check_failed", error=str(e))
                 self.use_live_usage_check = False
 
         # Fall back to budget-based check
@@ -332,22 +313,31 @@ class SmartScheduler:
         is_budget_available = self.budget_manager.is_budget_available(estimated_cost=estimated_cost)
 
         if not is_budget_available:
-            time_label = TimeOfDay.get_time_label()
+            time_label = get_time_label()
             remaining = self.budget_manager.get_remaining_budget()
 
             if remaining <= Decimal("0"):
-                message = (
-                    f"Budget exhausted for {time_label} period "
-                    f"(remaining: ${float(remaining):.4f}). Skipping task scheduling."
-                )
+                context = {
+                    "event": "scheduler.pause.budget_exhausted",
+                    "reason": "budget_exhausted",
+                    "time_period": time_label,
+                    "remaining_budget_usd": float(remaining),
+                }
             else:
-                message = (
-                    f"Remaining budget ${float(remaining):.4f} is below estimated task cost "
-                    f"${float(estimated_cost):.2f} during {time_label} period; skipping task scheduling."
-                )
-            return False, message
+                context = {
+                    "event": "scheduler.pause.budget_low",
+                    "reason": "budget_insufficient",
+                    "time_period": time_label,
+                    "remaining_budget_usd": float(remaining),
+                    "estimated_task_cost_usd": float(estimated_cost),
+                }
+            return False, context
         else:
-            return True, f"Budget available (${float(self.budget_manager.get_remaining_budget()):.2f} remaining)"
+            return True, {
+                "event": "scheduler.budget.ok",
+                "reason": "budget_ok",
+                "remaining_budget_usd": float(self.budget_manager.get_remaining_budget()),
+            }
 
     @staticmethod
     def _format_remaining(delta: timedelta) -> str:
@@ -376,24 +366,31 @@ class SmartScheduler:
         self._init_current_window()
 
         # Check if we should schedule tasks using live usage or budget
-        should_schedule, status_message = self._check_scheduling_allowed()
+        should_schedule, context = self._check_scheduling_allowed()
 
         if not should_schedule:
             now = datetime.utcnow()
+            event = context.pop("event", "scheduler.pause")
+            reason = context.get("reason")
             should_log = True
-            if self._budget_exhausted_logged and self._last_budget_exhausted_log:
-                should_log = (now - self._last_budget_exhausted_log).total_seconds() >= 60
-
+            if reason in {"budget_exhausted", "budget_insufficient"}:
+                if (
+                    self._budget_exhausted_logged
+                    and self._last_budget_exhausted_log
+                    and (now - self._last_budget_exhausted_log).total_seconds() < 60
+                ):
+                    should_log = False
+                if should_log:
+                    self._budget_exhausted_logged = True
+                    self._last_budget_exhausted_log = now
             if should_log:
-                logger.warning(status_message)
-                self._last_budget_exhausted_log = now
-                self._budget_exhausted_logged = True
+                logger.warning(event, **context)
             else:
-                logger.debug(status_message)
+                logger.debug(event, **context)
             return []
         else:
             if self._budget_exhausted_logged:
-                logger.info("Usage OK; resuming task scheduling.")
+                logger.info("scheduler.resume", **{k: v for k, v in context.items() if k != "event"})
             self._budget_exhausted_logged = False
             self._last_budget_exhausted_log = None
 
@@ -409,25 +406,18 @@ class SmartScheduler:
 
         # Log usage/budget info when scheduling
         if pending:
-            if self.use_live_usage_check and self.usage_checker:
-                try:
-                    usage_percent, _ = self.usage_checker.get_usage()
-                    logger.info(
-                        f"Scheduling {len(pending)} task(s) (Pro plan usage: {usage_percent:.0f}%)"
-                    )
-                except Exception:
-                    # Fall back to budget info if usage check fails
-                    budget_status = self.budget_manager.get_budget_status()
-                    logger.info(
-                        f"Scheduling {len(pending)} task(s) during {budget_status['time_period']} "
-                        f"(Budget: ${budget_status['remaining_budget_usd']:.2f} remaining)"
-                    )
+            payload: Dict[str, Any] = {"tasks": len(pending)}
+            if context.get("reason") in {"usage_ok", "usage_threshold"} and context.get("usage_percent") is not None:
+                payload["usage_percent"] = context["usage_percent"]
             else:
                 budget_status = self.budget_manager.get_budget_status()
-                logger.info(
-                    f"Scheduling {len(pending)} task(s) during {budget_status['time_period']} "
-                    f"(Budget: ${budget_status['remaining_budget_usd']:.2f} remaining)"
+                payload.update(
+                    {
+                        "time_period": budget_status["time_period"],
+                        "remaining_budget_usd": budget_status["remaining_budget_usd"],
+                    }
                 )
+            logger.info("scheduler.dispatch", **payload)
 
         return pending
 
@@ -449,11 +439,26 @@ class SmartScheduler:
         # Log scheduling decision
         project_info = f" [Project: {project_name}]" if project_name else ""
         if priority == TaskPriority.SERIOUS:
-            logger.info(f"🔴 Serious task scheduled: #{task.id}{project_info}")
+            logger.info(
+                "scheduler.task.scheduled",
+                task_id=task.id,
+                priority="serious",
+                project=project_name,
+            )
         elif priority == TaskPriority.RANDOM:
-            logger.info(f"🟡 Random thought scheduled: #{task.id}{project_info}")
+            logger.info(
+                "scheduler.task.scheduled",
+                task_id=task.id,
+                priority="random",
+                project=project_name,
+            )
         else:
-            logger.info(f"🟢 Generated task scheduled: #{task.id}{project_info}")
+            logger.info(
+                "scheduler.task.scheduled",
+                task_id=task.id,
+                priority="generated",
+                project=project_name,
+            )
 
         return task
 
@@ -491,12 +496,19 @@ class SmartScheduler:
 
             if total_cost_usd is not None:
                 logger.info(
-                    f"Recorded usage for task {task_id}: "
-                    f"${total_cost_usd:.4f} ({num_turns} turns, {duration_ms}ms)"
+                    "scheduler.usage.recorded",
+                    task_id=task_id,
+                    cost_usd=total_cost_usd,
+                    turns=num_turns,
+                    duration_ms=duration_ms,
                 )
         except Exception as e:
             session.rollback()
-            logger.error(f"Failed to record usage for task {task_id}: {e}")
+            logger.error(
+                "scheduler.usage.record_failed",
+                task_id=task_id,
+                error=str(e),
+            )
         finally:
             session.close()
 

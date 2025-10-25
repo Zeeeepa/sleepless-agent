@@ -1,6 +1,6 @@
-"""Data persistence and integration - Results and Git operations"""
+"""Backward-compatible storage exports."""
 
-from .git_manager import GitManager
-from .results import ResultManager
+from sleepless_agent.workspaces.git import GitManager
+from sleepless_agent.persistence.results import ResultManager
 
 __all__ = ["ResultManager", "GitManager"]

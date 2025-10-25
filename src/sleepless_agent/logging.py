@@ -38,12 +38,22 @@ _DEFAULT_LOG_DIR = Path(os.getenv("SLEEPLESS_LOG_DIR", "workspace/.logs"))
 
 _LEVEL_STYLES: Dict[str, str] = {
     "CRITICAL": "bold white on red",
-    "ERROR": "red",
-    "WARNING": "yellow",
-    "SUCCESS": "green",
-    "INFO": "white",
-    "DEBUG": "cyan",
-    "NOTSET": "grey50",
+    "ERROR": "bold red",
+    "WARNING": "bold yellow",
+    "SUCCESS": "bold green",
+    "INFO": "bold blue",
+    "DEBUG": "dim cyan",
+    "NOTSET": "dim",
+}
+
+_LEVEL_ICONS: Dict[str, str] = {
+    "CRITICAL": "✗",
+    "ERROR": "✗",
+    "WARNING": "⚠",
+    "SUCCESS": "✓",
+    "INFO": "ℹ",
+    "DEBUG": "⚙",
+    "NOTSET": "·",
 }
 
 
@@ -63,6 +73,21 @@ class DedupFilter(logging.Filter):
         if last is not None and (now - last) <= self.cooldown_seconds:
             return False
         self._history[key] = now
+        return True
+
+
+class ThirdPartyFilter(logging.Filter):
+    """Suppress noisy INFO logs from third-party libraries."""
+
+    def filter(self, record: logging.LogRecord) -> bool:  # pragma: no cover - noise reduction
+        # Allow all logs from sleepless_agent
+        if record.name.startswith("sleepless_agent"):
+            return True
+
+        # For third-party libraries, only show WARNING and above
+        if record.levelno < logging.WARNING:
+            return False
+
         return True
 
 
@@ -102,7 +127,10 @@ class EventDelta:
 
 def _level_markup(level: str) -> str:
     style = _LEVEL_STYLES.get(level, "white")
-    return f"[{style}]{level:<7}[/]"
+    icon = _LEVEL_ICONS.get(level, "·")
+    # Use shorter level names for compact display
+    short_level = level[:4] if level != "WARNING" else "WARN"
+    return f"[{style}]{icon} {short_level:<4}[/]"
 
 
 def _format_delta(delta_ms: Optional[int]) -> str:
@@ -145,20 +173,25 @@ def _console_renderer(
     else:
         ts_text = datetime.now().strftime("%H:%M:%S")
 
+    # Shorten component name for cleaner display
+    if component.startswith("sleepless_agent."):
+        component = component.replace("sleepless_agent.", "")
+
     pairs = _format_pairs(sorted(event_dict.items()))
 
+    # Build compact, visually clean output
     prefix = " | ".join(
         (
-            f"[dim]{ts_text}[/dim]",
+            f"[dim white]{ts_text}[/]",
             _level_markup(level),
-            f"[dim]{component}[/dim]",
-            f"[cyan]{_format_delta(delta_ms)}[/cyan]",
+            f"[bold magenta]{component}[/]",
+            f"[dim cyan]{_format_delta(delta_ms)}[/]",
         )
     )
 
     if pairs:
-        return f"{prefix} | {event} {pairs}"
-    return f"{prefix} | {event}"
+        return f"{prefix} | [white]{event}[/] [dim]{pairs}[/]"
+    return f"{prefix} | [white]{event}[/]"
 
 
 def _json_renderer(
@@ -170,6 +203,11 @@ def _json_renderer(
 
 
 def _common_processors() -> list[Any]:
+    """Return processors for foreign (non-structlog) loggers.
+
+    Note: wrap_for_formatter is NOT included here - it should only be
+    in the main structlog.configure() chain, not in foreign_pre_chain.
+    """
     return [
         merge_contextvars,
         structlog.stdlib.add_logger_name,
@@ -178,7 +216,6 @@ def _common_processors() -> list[Any]:
         EventDelta(),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
-        structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
     ]
 
 
@@ -197,6 +234,7 @@ def configure_logging(
 
     console_handler = RichConsoleHandler()
     console_handler.setLevel(resolved_level)
+    console_handler.addFilter(ThirdPartyFilter())
     console_handler.addFilter(DedupFilter(cooldown_seconds=1.0))
     console_handler.setFormatter(
         structlog.stdlib.ProcessorFormatter(
@@ -222,7 +260,9 @@ def configure_logging(
     )
 
     structlog.configure(
-        processors=_common_processors(),
+        processors=_common_processors() + [
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,
         cache_logger_on_first_use=True,

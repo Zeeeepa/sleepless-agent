@@ -1,9 +1,9 @@
-"""Core business logic - task queue, scheduler, and models"""
+"""Backward-compatibility re-exports for legacy imports."""
 
-from .models import Result, Task, TaskPriority, TaskStatus, init_db
-from .scheduler import SmartScheduler
-from .task_queue import TaskQueue
-from .auto_generator import AutoTaskGenerator
+from sleepless_agent.tasks.models import Result, Task, TaskPriority, TaskStatus, init_db
+from sleepless_agent.tasks.queue import TaskQueue
+from sleepless_agent.scheduling.scheduler import SmartScheduler
+from sleepless_agent.scheduling.auto_generator import AutoTaskGenerator
 
 __all__ = [
     "Task",

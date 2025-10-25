@@ -1,5 +1,5 @@
-"""Task execution - Claude Code integration"""
+"""Backward-compatible execution imports."""
 
-from .claude_code_executor import ClaudeCodeExecutor
+from sleepless_agent.workspaces.executor import ClaudeCodeExecutor
 
 __all__ = ["ClaudeCodeExecutor"]

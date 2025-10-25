@@ -31,7 +31,7 @@ logs:
 
 test:
 	@echo "Testing imports..."
-	python -c "from sleepless_agent.core.daemon import SleepleassAgent; print('✓ Imports OK')"
+	python -c "from sleepless_agent.runtime import SleeplessAgent; print('✓ Imports OK')"
 
 db:
 	sqlite3 workspace/data/tasks.db "SELECT id, description, status, priority FROM tasks LIMIT 10;"

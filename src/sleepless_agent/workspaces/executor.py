@@ -22,9 +22,10 @@ from claude_agent_sdk import (
     TextBlock,
 )
 from sleepless_agent.logging import get_logger
+
 logger = get_logger(__name__)
 
-from sleepless_agent.core.live_status import LiveStatusEntry, LiveStatusTracker
+from sleepless_agent.workspaces.live_status import LiveStatusEntry, LiveStatusTracker
 
 
 class ClaudeCodeExecutor:
@@ -60,7 +61,7 @@ class ClaudeCodeExecutor:
         # Verify Claude Code is available
         self._verify_claude_cli()
 
-        logger.info(f"ClaudeCodeExecutor initialized with workspace: {self.workspace_root}")
+        logger.info("executor.init", workspace=str(self.workspace_root))
 
     def _verify_claude_cli(self):
         """Verify Claude Code CLI is available"""
@@ -71,18 +72,18 @@ class ClaudeCodeExecutor:
                 timeout=5,
             )
             if result.returncode == 0:
-                logger.info("Claude Code CLI verified successfully")
+                logger.info("executor.cli.verified")
             else:
                 raise CLINotFoundError()
 
         except (FileNotFoundError, subprocess.TimeoutExpired):
-            logger.error("Claude Code CLI not found")
+            logger.error("executor.cli.not_found")
             raise RuntimeError(
                 "Claude Code CLI not found. "
                 "Please install with: npm install -g @anthropic-ai/claude-code"
             )
         except Exception as e:
-            logger.warning(f"Could not verify Claude Code CLI: {e}")
+            logger.warning("executor.cli.verify_failed", error=str(e))
             # Don't fail initialization - let it fail on actual execution if needed
 
     # ------------------------------------------------------------------ Live status helpers
@@ -112,7 +113,7 @@ class ClaudeCodeExecutor:
             )
             self.live_status_tracker.update(entry)
         except Exception as exc:  # pragma: no cover - debug aid
-            logger.debug(f"Live status update failed for task {task_id}: {exc}")
+            logger.debug("executor.live_status.update_failed", task_id=task_id, error=str(exc))
 
     def _live_clear(self, task_id: int) -> None:
         """Remove live status tracking for the task."""
@@ -121,7 +122,7 @@ class ClaudeCodeExecutor:
         try:
             self.live_status_tracker.clear(task_id)
         except Exception as exc:  # pragma: no cover - debug aid
-            logger.debug(f"Failed to clear live status for task {task_id}: {exc}")
+            logger.debug("executor.live_status.clear_failed", task_id=task_id, error=str(exc))
         finally:
             self._live_context.pop(task_id, None)
 
@@ -189,9 +190,9 @@ class ClaudeCodeExecutor:
             )
 
             readme_path.write_text(content)
-            logger.info(f"Created README.md at {readme_path}")
+            logger.info("executor.readme.created", path=str(readme_path))
         except Exception as e:
-            logger.warning(f"Failed to create README.md: {e}")
+            logger.warning("executor.readme.create_failed", error=str(e), path=str(readme_path))
 
         return readme_path
 
@@ -223,9 +224,9 @@ Generated: {datetime.utcnow().isoformat()}
 (Will be completed by evaluator agent)
 """
             plan_path.write_text(header)
-            logger.info(f"Created PLAN.md at {plan_path}")
+            logger.info("executor.plan.created", path=str(plan_path))
         except Exception as e:
-            logger.warning(f"Failed to create PLAN.md: {e}")
+            logger.warning("executor.plan.create_failed", error=str(e), path=str(plan_path))
 
         return plan_path
 
@@ -246,7 +247,7 @@ Generated: {datetime.utcnow().isoformat()}
             try:
                 context_parts.append("## Project README\n" + readme_path.read_text())
             except Exception as e:
-                logger.warning(f"Failed to read README: {e}")
+                logger.warning("executor.readme.read_failed", error=str(e), path=str(readme_path))
 
         # List main files/directories
         try:
@@ -255,7 +256,7 @@ Generated: {datetime.utcnow().isoformat()}
             if file_list:
                 context_parts.append(f"\n## Workspace Contents\n- " + "\n- ".join(sorted(file_list)))
         except Exception as e:
-            logger.warning(f"Failed to list workspace contents: {e}")
+            logger.warning("executor.workspace.list_failed", error=str(e), workspace=str(workspace))
 
         return "\n".join(context_parts) if context_parts else "Empty workspace"
 
@@ -297,9 +298,9 @@ Generated: {datetime.utcnow().isoformat()}
 
             content = content.replace("## Execution Summary", f"## Execution Summary{update}\n\n## Execution Summary")
             readme_path.write_text(content)
-            logger.info(f"Updated README.md history at {readme_path}")
+            logger.info("executor.readme.history_updated", path=str(readme_path))
         except Exception as e:
-            logger.warning(f"Failed to update README history: {e}")
+            logger.warning("executor.readme.history_failed", error=str(e), path=str(readme_path))
 
     def _extract_status_from_evaluation(self, evaluation_text: str) -> str:
         """Extract completion status from evaluator output
@@ -414,7 +415,7 @@ Generated: {datetime.utcnow().isoformat()}
         readme_path = workspace / "README.md"
 
         if not readme_path.exists():
-            logger.warning(f"README.md not found at {readme_path}")
+            logger.warning("executor.readme.missing", path=str(readme_path))
             return
 
         try:
@@ -464,10 +465,10 @@ Generated: {datetime.utcnow().isoformat()}
                 )
 
             readme_path.write_text(content)
-            logger.info(f"Updated README.md with status: {status}")
+            logger.info("executor.readme.status_updated", status=status, path=str(readme_path))
 
         except Exception as e:
-            logger.warning(f"Failed to update README.md with evaluation: {e}")
+            logger.warning("executor.readme.evaluation_failed", error=str(e), path=str(readme_path))
 
     def _should_auto_generate_refinement(
         self,
@@ -501,20 +502,22 @@ Generated: {datetime.utcnow().isoformat()}
         low_usage_threshold = config.multi_agent_workflow.pro_plan_monitoring.low_usage_threshold
         if current_usage_percent >= low_usage_threshold:
             logger.debug(
-                f"Usage {current_usage_percent:.1f}% >= threshold {low_usage_threshold:.1f}%, "
-                f"skipping auto-generation"
+                "executor.refine.threshold_skipped",
+                usage_percent=current_usage_percent,
+                threshold_percent=low_usage_threshold,
             )
             return False
 
         # Check status
         if status not in ["PARTIAL", "INCOMPLETE", "FAILED"]:
-            logger.debug(f"Status {status} doesn't require refinement")
+            logger.debug("executor.refine.status_skipped", status=status)
             return False
 
         logger.info(
-            f"Auto-generation conditions met: "
-            f"usage={current_usage_percent:.1f}% < {low_usage_threshold:.1f}%, "
-            f"status={status}"
+            "executor.refine.conditions_met",
+            usage_percent=current_usage_percent,
+            threshold_percent=low_usage_threshold,
+            status=status,
         )
         return True
 
@@ -542,8 +545,8 @@ Generated: {datetime.utcnow().isoformat()}
             Task ID of generated task, or None if failed
         """
         try:
-            from sleepless_agent.core.task_queue import TaskQueue
-            from sleepless_agent.core.models import TaskPriority
+            from sleepless_agent.tasks.queue import TaskQueue
+            from sleepless_agent.tasks.models import TaskPriority
             from sleepless_agent.config import get_config
 
             config = get_config()
@@ -572,14 +575,16 @@ Generated: {datetime.utcnow().isoformat()}
             )
 
             logger.info(
-                f"Auto-generated refinement task #{task.id} for {project_name or 'task'}: "
-                f"{refinement_desc[:60]}..."
+                "executor.refine.task_created",
+                task_id=task.id,
+                project=project_name or "task",
+                preview=refinement_desc[:80],
             )
 
             return task.id
 
         except Exception as e:
-            logger.warning(f"Failed to generate refinement task: {e}")
+            logger.warning("executor.refine.generate_failed", error=str(e))
             return None
 
     def _generate_task_name_slug(self, description: str) -> str:
@@ -617,6 +622,7 @@ Generated: {datetime.utcnow().isoformat()}
         description: str,
         context: str,
         config_max_turns: int = 10,
+        workspace_task_type: Optional[str] = None,
     ) -> tuple[str, dict]:
         """Execute planner agent phase
 
@@ -625,14 +631,39 @@ Generated: {datetime.utcnow().isoformat()}
             description: Task description
             context: Workspace context (README, files)
             config_max_turns: Maximum turns for this phase
+            workspace_task_type: Task type ("new" or "refine")
 
         Returns:
             Tuple of (plan_text, usage_metrics)
         """
         from datetime import datetime
 
-        planner_prompt = f"""You are a planning expert. Analyze the task and workspace context, then create a structured plan.
+        # Add workspace task type context
+        task_type_note = ""
+        if workspace_task_type == "refine":
+            task_type_note = """
+## 🔧 REFINE TASK
+This workspace contains a copy of the sleepless-agent source code. Your goal is to IMPROVE the existing codebase:
+- Analyze and understand the current implementation
+- Refactor, optimize, or enhance existing code
+- Fix bugs or issues
+- Improve code quality, tests, or documentation
+- Add missing features to existing modules
 
+The changes you make should enhance the existing codebase and can be merged back to the main project.
+"""
+        elif workspace_task_type == "new":
+            task_type_note = """
+## 🆕 NEW TASK
+This is a fresh workspace. Your goal is to BUILD new functionality from scratch:
+- Design and implement new features
+- Create new modules or tools
+- Build standalone projects or prototypes
+- Experiment with new ideas
+"""
+
+        planner_prompt = f"""You are a planning expert. Analyze the task and workspace context, then create a structured plan.
+{task_type_note}
 ## Task
 {description}
 
@@ -701,9 +732,11 @@ Output should be:
                     usage_metrics["planner_duration_ms"] = message.duration_ms
                     usage_metrics["planner_turns"] = message.num_turns
 
-                    logger.info(
-                        f"Planner phase completed in {message.duration_ms}ms "
-                        f"(turns: {message.num_turns}, cost: ${message.total_cost_usd:.4f})"
+                    logger.debug(
+                        "executor.planner.turn_metrics",
+                        duration_ms=message.duration_ms,
+                        turns=message.num_turns,
+                        cost_usd=message.total_cost_usd,
                     )
 
             plan_text = "\n".join(output_parts)
@@ -720,7 +753,7 @@ Output should be:
             return plan_text, usage_metrics
 
         except Exception as e:
-            logger.error(f"Planner phase failed: {e}")
+            logger.error("executor.planner.failed", error=str(e))
             raise
 
     async def _execute_worker_phase(
@@ -844,9 +877,11 @@ Please work through the plan systematically and update TodoWrite as you complete
                     usage_metrics["worker_duration_ms"] = message.duration_ms
                     usage_metrics["worker_turns"] = message.num_turns
 
-                    logger.info(
-                        f"Worker phase completed in {message.duration_ms}ms "
-                        f"(turns: {message.num_turns}, cost: ${message.total_cost_usd:.4f})"
+                    logger.debug(
+                        "executor.worker.turn_metrics",
+                        duration_ms=message.duration_ms,
+                        turns=message.num_turns,
+                        cost_usd=message.total_cost_usd,
                     )
 
             output_text = "\n".join(output_parts)
@@ -858,7 +893,7 @@ Please work through the plan systematically and update TodoWrite as you complete
                 summary = ", ".join(
                     f"{name} x{count}" for name, count in tool_usage_counts.items()
                 )
-                logger.info(f"Worker tools summary: {summary}")
+                logger.info("executor.worker.tools_summary", summary=summary)
 
             exit_code = 0 if success else 1
 
@@ -874,7 +909,7 @@ Please work through the plan systematically and update TodoWrite as you complete
             return output_text, all_modified_files, commands_executed, exit_code, usage_metrics
 
         except Exception as e:
-            logger.error(f"Worker phase failed: {e}")
+            logger.error("executor.worker.failed", error=str(e))
             raise
 
     async def _execute_evaluator_phase(
@@ -979,9 +1014,11 @@ Output should include:
                     usage_metrics["evaluator_duration_ms"] = message.duration_ms
                     usage_metrics["evaluator_turns"] = message.num_turns
 
-                    logger.info(
-                        f"Evaluator phase completed in {message.duration_ms}ms "
-                        f"(turns: {message.num_turns}, cost: ${message.total_cost_usd:.4f})"
+                    logger.debug(
+                        "executor.evaluator.turn_metrics",
+                        duration_ms=message.duration_ms,
+                        turns=message.num_turns,
+                        cost_usd=message.total_cost_usd,
                     )
 
             evaluation_text = "\n".join(output_parts)
@@ -1000,11 +1037,11 @@ Output should include:
             outstanding_items = self._extract_outstanding_items(evaluation_text)
             recommendations = self._extract_recommendations(evaluation_text)
 
-            logger.info(f"Evaluation status: {status}")
+            logger.info("executor.evaluator.status", status=status)
             if outstanding_items:
-                logger.info(f"Outstanding items: {len(outstanding_items)}")
+                logger.info("executor.evaluator.outstanding", count=len(outstanding_items))
             if recommendations:
-                logger.info(f"Recommendations: {len(recommendations)}")
+                logger.info("executor.evaluator.recommendations", count=len(recommendations))
 
             # Update README with evaluation results
             # Note: We'll do this right before the usage check so we have access to task_id, project_id, etc.
@@ -1018,7 +1055,7 @@ Output should include:
 
                 config = get_config()
                 if config.multi_agent_workflow.pro_plan_monitoring.enabled:
-                    logger.info("Checking Pro plan usage...")
+                    logger.debug("executor.usage.checking")
                     checker = ProPlanUsageChecker(
                         command=config.multi_agent_workflow.pro_plan_monitoring.usage_command,
                     )
@@ -1029,10 +1066,9 @@ Output should include:
                     if should_pause:
                         usage_percent, _ = checker.get_usage()
                         logger.critical(
-                            "Pro plan usage limit reached: {:.1f}% >= {:.1f}% threshold".format(
-                                usage_percent,
-                                config.multi_agent_workflow.pro_plan_monitoring.pause_threshold,
-                            )
+                            "executor.usage.threshold_reached",
+                            usage_percent=usage_percent,
+                            threshold_percent=config.multi_agent_workflow.pro_plan_monitoring.pause_threshold,
                         )
                         raise PauseException(
                             message=f"Pro plan usage limit reached at {usage_percent:.1f}%",
@@ -1040,22 +1076,94 @@ Output should include:
                             usage_percent=usage_percent,
                         )
                     else:
-                        logger.info("Pro plan usage OK - ready for next task")
+                        logger.info("executor.usage.ready")
 
             except PauseException:
                 # Re-raise PauseException to be caught by caller
                 raise
             except ImportError:
-                logger.debug("Pro plan monitoring not available")
+                logger.debug("executor.usage.monitoring_disabled")
             except Exception as e:
-                logger.warning(f"Error checking Pro plan usage: {e}")
+                logger.warning("executor.usage.check_error", error=str(e))
                 # Don't fail the task due to usage check errors
 
             return evaluation_text, status, outstanding_items, recommendations, usage_metrics
 
         except Exception as e:
-            logger.error(f"Evaluator phase failed: {e}")
+            logger.error("executor.evaluator.failed", error=str(e))
             raise
+
+    def _copy_source_to_workspace(
+        self,
+        workspace: Path,
+        task_id: int,
+    ) -> None:
+        """Copy sleepless-agent source code to workspace for REFINE tasks
+
+        Args:
+            workspace: Target workspace directory
+            task_id: Task ID (for logging)
+        """
+        try:
+            from sleepless_agent.config import get_config
+
+            config = get_config()
+            task_type_config = config.auto_generation.task_type
+
+            # Get project root (parent of workspace_root)
+            project_root = self.workspace_root.parent
+
+            logger.debug(
+                "executor.copy_source.start",
+                task_id=task_id,
+                project_root=str(project_root),
+                workspace=str(workspace)
+            )
+
+            copied_count = 0
+
+            # Copy each configured source path
+            for source_path_str in task_type_config.source_code_paths:
+                source = project_root / source_path_str
+                dest = workspace / source_path_str
+
+                if not source.exists():
+                    logger.warning(
+                        "executor.copy_source.not_found",
+                        source=str(source),
+                        task_id=task_id
+                    )
+                    continue
+
+                if source.is_dir():
+                    # Copy directory, excluding patterns
+                    shutil.copytree(
+                        source,
+                        dest,
+                        ignore=shutil.ignore_patterns(*task_type_config.exclude_patterns),
+                        dirs_exist_ok=True
+                    )
+                    copied_count += 1
+                else:
+                    # Copy file
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, dest)
+                    copied_count += 1
+
+            logger.info(
+                "executor.copy_source.complete",
+                task_id=task_id,
+                copied_items=copied_count,
+                workspace=str(workspace)
+            )
+
+        except Exception as e:
+            logger.error(
+                "executor.copy_source.failed",
+                task_id=task_id,
+                error=str(e)
+            )
+            # Don't fail task creation due to copy errors - workspace is still usable
 
     def create_task_workspace(
         self,
@@ -1064,6 +1172,7 @@ Output should include:
         init_git: bool = False,
         project_id: Optional[str] = None,
         project_name: Optional[str] = None,
+        task_type: Optional[str] = None,
     ) -> Path:
         """Create workspace for task - project-based if project_id provided, else task-specific
 
@@ -1073,6 +1182,7 @@ Output should include:
             init_git: Whether to initialize git repo in workspace
             project_id: Optional project ID for shared workspace
             project_name: Optional project name (for logging)
+            task_type: Task type ("new" or "refine") - if "refine", copy source code
 
         Returns:
             Path to created workspace
@@ -1089,11 +1199,21 @@ Output should include:
 
         workspace.mkdir(parents=True, exist_ok=True)
 
+        # For REFINE tasks, copy source code to workspace
+        if task_type == "refine":
+            logger.info(
+                "workspace.refine_task",
+                task_id=task_id,
+                workspace=str(workspace)
+            )
+            self._copy_source_to_workspace(workspace, task_id)
+
         logger.info(
             "workspace.ready",
             task_id=task_id,
             workspace=str(workspace),
             workspace_type=workspace_type,
+            task_type=task_type or "new"
         )
         return workspace
 
@@ -1106,6 +1226,7 @@ Output should include:
         timeout: Optional[int] = None,
         project_id: Optional[str] = None,
         project_name: Optional[str] = None,
+        workspace_task_type: Optional[str] = None,
     ) -> Tuple[str, List[str], List[str], int]:
         """Execute task with Claude Code SDK
 
@@ -1117,6 +1238,7 @@ Output should include:
             timeout: Timeout in seconds (not directly supported by SDK)
             project_id: Optional project ID for shared workspace
             project_name: Optional project name (for logging)
+            workspace_task_type: Workspace task type ("new" or "refine") - for workspace initialization
 
         Returns:
             Tuple of (output_text, files_modified, commands_executed, exit_code, usage_metrics)
@@ -1144,7 +1266,8 @@ Output should include:
                 task_description=description,
                 init_git=init_git,
                 project_id=project_id,
-                project_name=project_name
+                project_name=project_name,
+                task_type=workspace_task_type
             )
 
             # Multi-agent workflow orchestration
@@ -1212,6 +1335,7 @@ Output should include:
                         description=description,
                         context=workspace_context,
                         config_max_turns=multi_agent_config.planner.max_turns,
+                        workspace_task_type=workspace_task_type,
                     )
                     all_output_parts.append(f"## Planner Output\n{plan_text}")
 
@@ -1442,7 +1566,7 @@ Output should include:
                 answer="Claude Code CLI not found",
                 status="error",
             )
-            logger.error("Claude Code CLI not found")
+            logger.error("executor.cli.not_found")
             raise RuntimeError(
                 "Claude Code CLI not found. "
                 "Please install with: npm install -g @anthropic-ai/claude-code"
@@ -1455,7 +1579,7 @@ Output should include:
                 answer=str(e),
                 status="error",
             )
-            logger.error(f"Claude Code process error: {e}")
+            logger.error("executor.cli.process_error", error=str(e))
             raise RuntimeError(f"Claude Code process failed: {e}")
         except CLIJSONDecodeError as e:
             self._live_update(
@@ -1465,7 +1589,7 @@ Output should include:
                 answer=str(e),
                 status="error",
             )
-            logger.error(f"Failed to parse Claude Code output: {e}")
+            logger.error("executor.cli.parse_failed", error=str(e))
             raise RuntimeError(f"Failed to parse Claude Code output: {e}")
         except asyncio.CancelledError:
             self._live_update(
@@ -1475,7 +1599,7 @@ Output should include:
                 answer="Execution cancelled (timeout or shutdown)",
                 status="error",
             )
-            logger.warning(f"Task {task_id} execution cancelled")
+            logger.warning("executor.task.cancelled", task_id=task_id)
             raise
         except Exception as e:
             self._live_update(
@@ -1485,22 +1609,47 @@ Output should include:
                 answer=str(e),
                 status="error",
             )
-            logger.error(f"Failed to execute task {task_id}: {e}")
+            logger.error("executor.task.failed", task_id=task_id, error=str(e))
             raise
         finally:
             self._live_context.pop(task_id, None)
 
-    def _build_prompt(self, description: str, task_type: str, priority: str) -> str:
+    def _build_prompt(self, description: str, task_type: str, priority: str, workspace_task_type: Optional[str] = None) -> str:
         """Build enhanced prompt for Claude Code
 
         Args:
             description: Task description
-            task_type: Type of task
+            task_type: Type of task (code, research, etc.)
             priority: Task priority
+            workspace_task_type: Workspace task type ("new" or "refine")
 
         Returns:
             Enhanced prompt string
         """
+        # Workspace task type context
+        workspace_context = ""
+        if workspace_task_type == "refine":
+            workspace_context = """
+🔧 REFINE TASK: This workspace contains a copy of the sleepless-agent source code.
+Your goal is to IMPROVE the existing codebase:
+- Analyze the current implementation
+- Refactor and optimize existing code
+- Fix bugs or issues
+- Add missing features to existing modules
+- Improve code quality, tests, or documentation
+
+The changes you make should enhance the existing codebase and can be merged back to the main project."""
+        elif workspace_task_type == "new":
+            workspace_context = """
+🆕 NEW TASK: This is a fresh workspace.
+Your goal is to BUILD new functionality from scratch:
+- Design and implement new features
+- Create new modules or tools
+- Build standalone projects or prototypes
+- Experiment with new ideas
+
+Feel free to start from a blank slate and create something new!"""
+
         # Task type specific instructions
         type_instructions = {
             "code": """You are an expert software engineer. Use the available tools to:
@@ -1552,7 +1701,7 @@ Be thorough, methodical, and provide clear explanations.""",
 
         # Build full prompt
         prompt = f"""{instructions}
-
+{workspace_context}
 {priority_note}
 
 TASK:
@@ -1602,7 +1751,7 @@ Please complete this task and provide a summary of what you did at the end.
                     if not should_exclude:
                         files.add(str(relative_path))
         except Exception as e:
-            logger.warning(f"Error scanning workspace files: {e}")
+            logger.warning("executor.workspace.scan_failed", error=str(e), workspace=str(workspace_path))
 
         return files
 
@@ -1616,7 +1765,7 @@ Please complete this task and provide a summary of what you did at the end.
             for cache_dir in workspace.rglob("__pycache__"):
                 shutil.rmtree(cache_dir, ignore_errors=True)
         except Exception as exc:
-            logger.debug(f"Failed to clean __pycache__ in {workspace}: {exc}")
+            logger.debug("executor.workspace.cache_cleanup_failed", workspace=str(workspace), error=str(exc))
 
     def _find_task_workspace(self, task_id: int) -> Optional[Path]:
         """Find task workspace by ID (searches tasks/ directory)
@@ -1632,7 +1781,7 @@ Please complete this task and provide a summary of what you did at the end.
                 if item.is_dir() and item.name.startswith(f"{task_id}_"):
                     return item
         except Exception as e:
-            logger.debug(f"Error searching for task workspace {task_id}: {e}")
+            logger.debug("executor.workspace.lookup_failed", task_id=task_id, error=str(e))
         return None
 
     def cleanup_workspace(self, task_id: int, force: bool = False) -> bool:
@@ -1647,7 +1796,7 @@ Please complete this task and provide a summary of what you did at the end.
         workspace = self._find_task_workspace(task_id)
 
         if workspace is None or not workspace.exists():
-            logger.debug(f"Workspace does not exist for task {task_id}")
+            logger.debug("executor.workspace.missing", task_id=task_id)
             return False
 
         try:
@@ -1656,12 +1805,12 @@ Please complete this task and provide a summary of what you did at the end.
             if force or len(contents) == 0:
                 import shutil
                 shutil.rmtree(workspace)
-                logger.info(f"Cleaned up workspace: {workspace}")
+                logger.info("executor.workspace.cleaned", workspace=str(workspace))
                 return True
-            logger.debug(f"Workspace not empty, skipping cleanup: {workspace}")
+            logger.debug("executor.workspace.skip_cleanup", workspace=str(workspace))
             return False
         except Exception as e:
-            logger.error(f"Failed to cleanup workspace {workspace}: {e}")
+            logger.error("executor.workspace.cleanup_failed", workspace=str(workspace), error=str(e))
             return False
 
     def get_workspace_path(self, task_id: int, project_id: Optional[str] = None) -> Optional[Path]:

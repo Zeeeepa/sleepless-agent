@@ -1,7 +1,7 @@
 """Configuration management"""
 
-import os
 from pathlib import Path
+from typing import List, Optional
 
 from dotenv import load_dotenv
 from pydantic import Field
@@ -76,25 +76,79 @@ class MultiAgentWorkflowConfig(BaseSettings):
     pro_plan_monitoring: ProPlanMonitoringConfig = Field(default_factory=ProPlanMonitoringConfig)
 
 
+class TaskTypeConfig(BaseSettings):
+    """Task type configuration for NEW vs REFINE tasks"""
+    default_for_autogen: str = "new"  # Default task type for auto-generated tasks without prefix
+
+    # Source code paths to copy for REFINE tasks (relative to project root)
+    source_code_paths: list[str] = [
+        "src/",
+        "pyproject.toml",
+        "README.md",
+        ".gitignore"
+    ]
+
+    # Exclude patterns when copying source code for REFINE tasks
+    exclude_patterns: list[str] = [
+        "__pycache__",
+        "*.pyc",
+        ".git",
+        ".venv",
+        "venv",
+        "*.egg-info",
+        "dist",
+        "build",
+        "workspace"
+    ]
+
+
+class AutoTaskPromptConfig(BaseSettings):
+    """Configuration describing a single auto-generation prompt."""
+
+    name: str
+    prompt: str
+    weight: int = 1
+    model: Optional[str] = None
+    log_severity: str = "error"
+
+
 class AutoGenerationConfig(BaseSettings):
     """Auto-task generation configuration"""
+
     enabled: bool = True  # Enable automatic task generation
     usage_threshold_percent: int = 60  # Generate tasks when usage < X% of daily budget
     budget_ceiling_percent: int = 85  # Stop generation when usage >= X% of daily budget
     rate_limit_night: int = 2  # Tasks per hour (night: 8PM-8AM)
     rate_limit_day: int = 1  # Tasks per hour (day: 8AM-8PM)
 
-    # Task source weights (percentages, should sum to 100)
-    source_weights: dict = {
-        "pool": 30,  # Predefined task pool
-        "code": 25,  # Code analysis (TODOs, tech debt)
-        "ai": 25,    # AI-generated ideas
-        "backlog": 20  # Project backlog (GitHub issues, etc.)
-    }
+    prompts: List[AutoTaskPromptConfig] = Field(
+        default_factory=lambda: [
+            AutoTaskPromptConfig(
+                name="default_improvement",
+                weight=1,
+                prompt=(
+                    "You are a software development assistant. Generate ONE specific, actionable "
+                    "improvement idea for a Generic Python project.\n\n"
+                    "Generate task ideas in categories like:\n"
+                    "- Code quality (refactoring, optimization, testing)\n"
+                    "- Documentation (docstrings, README, examples)\n"
+                    "- Features (new functionality, enhancements)\n"
+                    "- Architecture (design improvements, modularity)\n"
+                    "- Performance (caching, algorithms, database queries)\n"
+                    "- Security (input validation, authentication, encryption)\n\n"
+                    "IMPORTANT: Classify the task type and prefix your response with [NEW] or [REFINE].\n"
+                    "Respond with the type prefix followed by a single task description in 1-2 sentences."
+                ),
+            )
+        ]
+    )
 
     # Task type distribution
     random_ratio: float = 0.6  # Fraction of auto-generated tasks kept low priority vs escalated to SERIOUS
     ai_model: str = "claude-sonnet-4-5-20250929"
+
+    # Task type configuration
+    task_type: TaskTypeConfig = Field(default_factory=TaskTypeConfig)
 
 
 class AgentConfig(BaseSettings):
