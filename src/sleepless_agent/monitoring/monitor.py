@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from sleepless_agent.logging import get_logger
+from sleepless_agent.monitoring.logging import get_logger
 logger = get_logger(__name__)
 
 

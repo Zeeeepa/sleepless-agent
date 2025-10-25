@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
-from sleepless_agent.logging import get_logger
+from sleepless_agent.monitoring.logging import get_logger
 logger = get_logger(__name__)
 
 

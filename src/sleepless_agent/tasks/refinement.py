@@ -6,13 +6,13 @@ import json
 from datetime import datetime, timedelta
 from typing import Optional, Sequence
 
-from sleepless_agent.logging import get_logger
+from sleepless_agent.monitoring.logging import get_logger
 logger = get_logger(__name__)
 
 from sqlalchemy.orm import Session
 
-from sleepless_agent.tasks.models import GenerationHistory, Task, TaskPriority, TaskStatus
-from sleepless_agent.tasks.queue import TaskQueue
+from sleepless_agent.core.models import GenerationHistory, Task, TaskPriority, TaskStatus
+from sleepless_agent.core.queue import TaskQueue
 
 
 REFINEMENT_CONTEXT_KEY = "refinement_parent_task_id"

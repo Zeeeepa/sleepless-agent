@@ -6,7 +6,7 @@
 	<string>com.sleepless-agent</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/usr/local/bin/sleepless</string>
+		<string>/usr/local/bin/sle</string>
 		<string>daemon</string>
 	</array>
 	<key>WorkingDirectory</key>

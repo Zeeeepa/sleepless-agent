@@ -9,8 +9,8 @@ from typing import List, Optional
 from sqlalchemy import case
 from sqlalchemy.orm import Session
 
-from sleepless_agent.logging import get_logger
-from sleepless_agent.persistence.sqlite import SQLiteStore
+from sleepless_agent.monitoring.logging import get_logger
+from sleepless_agent.storage.sqlite import SQLiteStore
 
 from .models import Task, TaskPriority, TaskStatus
 

@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from sleepless_agent.logging import get_logger
+from sleepless_agent.monitoring.logging import get_logger
 logger = get_logger(__name__)
 
 from rich import box
@@ -24,10 +24,10 @@ from rich.table import Table
 from rich.text import Text
 
 from sleepless_agent.config import get_config
-from sleepless_agent.tasks.models import TaskPriority, TaskStatus, init_db
-from sleepless_agent.tasks.queue import TaskQueue
-from sleepless_agent.workspaces.display import format_age_seconds, format_duration, relative_time, shorten
-from sleepless_agent.workspaces.live_status import LiveStatusTracker
+from sleepless_agent.core.models import TaskPriority, TaskStatus, init_db
+from sleepless_agent.core.queue import TaskQueue
+from sleepless_agent.utils.display import format_age_seconds, format_duration, relative_time, shorten
+from sleepless_agent.utils.live_status import LiveStatusTracker
 from sleepless_agent.tasks.utils import prepare_task_creation
 from sleepless_agent.monitoring.monitor import HealthMonitor
 from sleepless_agent.monitoring.report_generator import ReportGenerator
@@ -711,7 +711,7 @@ def command_trash(ctx: CLIContext, subcommand: Optional[str] = None, identifier:
 
     elif subcommand == "restore":
         if not identifier:
-            print("Usage: sleepless trash restore <project_id_or_name>", file=sys.stderr)
+            print("Usage: sle trash restore <project_id_or_name>", file=sys.stderr)
             return 1
 
         trash_dir = Path("workspace") / "trash"
@@ -784,7 +784,7 @@ def command_trash(ctx: CLIContext, subcommand: Optional[str] = None, identifier:
 
     else:
         print(f"Unknown trash subcommand: {subcommand}", file=sys.stderr)
-        print("Usage: sleepless trash list|restore|empty [identifier]", file=sys.stderr)
+        print("Usage: sle trash list|restore|empty [identifier]", file=sys.stderr)
         return 1
 
 
@@ -792,11 +792,11 @@ def command_report(ctx: CLIContext, identifier: Optional[str] = None, list_repor
     """Unified report command - shows task details, daily reports, or project reports.
 
     Usage:
-        sleepless report              # Today's daily report
-        sleepless report 123          # Task #123 details
-        sleepless report 2025-10-22   # Specific date's report
-        sleepless report project-id   # Project report
-        sleepless report --list       # List all reports
+        sle report              # Today's daily report
+        sle report 123          # Task #123 details
+        sle report 2025-10-22   # Specific date's report
+        sle report project-id   # Project report
+        sle report --list       # List all reports
     """
 
     if list_reports:

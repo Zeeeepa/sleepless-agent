@@ -7,16 +7,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Optional, Set
 
-from sleepless_agent.logging import get_logger
+from sleepless_agent.monitoring.logging import get_logger
 
-from sleepless_agent.tasks.models import TaskPriority
+from sleepless_agent.core.models import TaskPriority
 from sleepless_agent.scheduling.scheduler import SmartScheduler
-from sleepless_agent.tasks.queue import TaskQueue
+from sleepless_agent.core.queue import TaskQueue
 from sleepless_agent.monitoring.report_generator import ReportGenerator, TaskMetrics
 from sleepless_agent.monitoring.monitor import HealthMonitor, PerformanceLogger
-from sleepless_agent.workspaces.git import GitManager
-from sleepless_agent.persistence.results import ResultManager
-from sleepless_agent.workspaces.executor import ClaudeCodeExecutor
+from sleepless_agent.storage.git import GitManager
+from sleepless_agent.storage.results import ResultManager
+from sleepless_agent.core.executor import ClaudeCodeExecutor
 from sleepless_agent.interfaces.bot import SlackBot
 from sleepless_agent.exceptions import PauseException
 

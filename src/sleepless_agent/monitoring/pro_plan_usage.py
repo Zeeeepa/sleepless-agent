@@ -21,7 +21,7 @@ if pty is not None:  # pragma: no cover - platform dependent
 else:  # pragma: no cover - platform dependent
     select = None  # type: ignore[assignment]
 
-from sleepless_agent.logging import get_logger
+from sleepless_agent.monitoring.logging import get_logger
 
 logger = get_logger(__name__)
 

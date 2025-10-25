@@ -38,7 +38,7 @@ dependencies = [
 ]
 
 [project.scripts]
-sleepless = "sleepless_agent.__main__:main"
+sle = "sleepless_agent.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/context-machine-lab/sleepless-agent"

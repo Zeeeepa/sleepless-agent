@@ -1,6 +1,6 @@
-"""Task models, queues, and helpers."""
+"""Task generation, refinement, and utilities."""
 
-from .models import (
+from sleepless_agent.core.models import (
     GenerationHistory,
     Result,
     Task,
@@ -10,7 +10,7 @@ from .models import (
     TaskPool,
     init_db,
 )
-from .queue import TaskQueue
+from sleepless_agent.core.queue import TaskQueue
 from .refinement import ensure_refinement_task
 from .utils import prepare_task_creation
 

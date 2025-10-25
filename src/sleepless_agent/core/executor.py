@@ -21,11 +21,11 @@ from claude_agent_sdk import (
     ResultMessage,
     TextBlock,
 )
-from sleepless_agent.logging import get_logger
+from sleepless_agent.monitoring.logging import get_logger
 
 logger = get_logger(__name__)
 
-from sleepless_agent.workspaces.live_status import LiveStatusEntry, LiveStatusTracker
+from sleepless_agent.utils.live_status import LiveStatusEntry, LiveStatusTracker
 
 
 class ClaudeCodeExecutor:
@@ -545,8 +545,8 @@ Generated: {datetime.utcnow().isoformat()}
             Task ID of generated task, or None if failed
         """
         try:
-            from sleepless_agent.tasks.queue import TaskQueue
-            from sleepless_agent.tasks.models import TaskPriority
+            from sleepless_agent.core.queue import TaskQueue
+            from sleepless_agent.core.models import TaskPriority
             from sleepless_agent.config import get_config
 
             config = get_config()

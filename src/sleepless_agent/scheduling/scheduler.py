@@ -11,10 +11,10 @@ from sleepless_agent.scheduling.time_utils import (
     get_time_label,
     is_nighttime,
 )
-from sleepless_agent.logging import get_logger
+from sleepless_agent.monitoring.logging import get_logger
 
-from sleepless_agent.tasks.models import Task, TaskPriority, TaskStatus, UsageMetric
-from sleepless_agent.tasks.queue import TaskQueue
+from sleepless_agent.core.models import Task, TaskPriority, TaskStatus, UsageMetric
+from sleepless_agent.core.queue import TaskQueue
 
 logger = get_logger(__name__)
 

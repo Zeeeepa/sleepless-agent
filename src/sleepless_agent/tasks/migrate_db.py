@@ -2,7 +2,7 @@
 """Database migration utility for adding indexes to existing databases"""
 
 from typing import List
-from sleepless_agent.logging import get_logger
+from sleepless_agent.monitoring.logging import get_logger
 logger = get_logger(__name__)
 
 from sqlalchemy import create_engine, inspect, text

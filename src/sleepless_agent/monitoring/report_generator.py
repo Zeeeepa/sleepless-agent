@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional, Dict, List
 from dataclasses import dataclass
 
-from sleepless_agent.logging import get_logger
+from sleepless_agent.monitoring.logging import get_logger
 
 logger = get_logger(__name__)
 
