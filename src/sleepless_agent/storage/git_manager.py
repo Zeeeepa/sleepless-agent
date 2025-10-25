@@ -49,6 +49,8 @@ class GitManager:
             if self.default_task_branch != self.main_branch:
                 self.ensure_branch(self.default_task_branch)
 
+            self._ensure_gitignore()
+
             return True
         except Exception as exc:  # pragma: no cover - defensive
             logger.error(f"Failed to initialize workspace git repo: {exc}")
@@ -225,6 +227,30 @@ class GitManager:
             raise RuntimeError(result.stderr.strip() or "git command failed")
         return result.stdout.strip()
 
+    def _ensure_gitignore(self):
+        """Ensure mutable runtime artifacts stay out of version control."""
+        gitignore_path = self.repo_path / ".gitignore"
+        managed_header = "# Sleepless Agent managed ignores"
+        ignore_entries = ["data/"]
+
+        existing_lines = []
+        if gitignore_path.exists():
+            existing_lines = gitignore_path.read_text().splitlines()
+
+        updated_lines = list(existing_lines)
+
+        if managed_header not in updated_lines:
+            if updated_lines and updated_lines[-1].strip():
+                updated_lines.append("")
+            updated_lines.append(managed_header)
+
+        for entry in ignore_entries:
+            if entry not in updated_lines:
+                updated_lines.append(entry)
+
+        if updated_lines != existing_lines:
+            gitignore_path.write_text("\n".join(updated_lines) + "\n")
+
     def _repo_exists(self) -> bool:
         return (self.repo_path / ".git").exists()
 
@@ -249,7 +275,52 @@ class GitManager:
         paths = list(files)
         if not paths:
             return
-        self._run_git("add", "--", *paths)
+        tracked = self._filter_tracked_paths(paths)
+        if not tracked:
+            logger.debug("All candidate paths are ignored; skipping staging.")
+            return
+        self._run_git("add", "--", *tracked)
+
+    def _filter_tracked_paths(self, paths: Iterable[str]) -> List[str]:
+        """Remove paths ignored by git, logging any that are skipped."""
+        tracked: List[str] = []
+        skipped: List[str] = []
+
+        for path in paths:
+            if self._is_ignored(path):
+                skipped.append(path)
+            else:
+                tracked.append(path)
+
+        if skipped:
+            logger.debug(f"Skipping ignored paths: {skipped}")
+
+        return tracked
+
+    def _is_ignored(self, path: str) -> bool:
+        """Return True if git would ignore the provided path."""
+        try:
+            result = subprocess.run(
+                ["git", "check-ignore", path],
+                cwd=self.repo_path,
+                capture_output=True,
+                text=True,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.debug(f"Unable to determine ignore status for {path}: {exc}")
+            return False
+
+        if result.returncode == 0:
+            # Path is ignored; git echoes it on stdout.
+            return True
+
+        if result.returncode == 1:
+            return False
+
+        logger.debug(
+            f"git check-ignore exited with {result.returncode} for {path}: {result.stderr.strip()}"
+        )
+        return False
 
     def _commit_if_needed(self, message: str) -> Optional[str]:
         if not self._has_pending_changes():

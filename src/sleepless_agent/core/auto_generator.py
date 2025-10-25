@@ -37,7 +37,7 @@ class AutoTaskGenerator:
         # Initialize task source managers
         self.task_pool_manager = TaskPoolManager(db_session)
         self.code_analyzer = CodeAnalyzer(workspace_root)
-        self.ai_generator = AITaskGenerator()
+        self.ai_generator = AITaskGenerator(model=config.ai_model)
         self.backlog_integrator = BacklogIntegrator()
 
         # Track generation rate limiting

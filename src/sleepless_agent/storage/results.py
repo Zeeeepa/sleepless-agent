@@ -3,13 +3,16 @@
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional, TypeVar
 
 from loguru import logger
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.exc import OperationalError
 
 from sleepless_agent.core.models import Result
+
+T = TypeVar("T")
 
 
 class ResultManager:
@@ -21,8 +24,41 @@ class ResultManager:
         self.results_path = Path(results_path)
         self.results_path.mkdir(parents=True, exist_ok=True)
 
-        self.engine = create_engine(f"sqlite:///{db_path}", echo=False, future=True)
+        self._create_engine()
+
+    def _create_engine(self):
+        self.engine = create_engine(f"sqlite:///{self.db_path}", echo=False, future=True)
         self.SessionLocal = sessionmaker(bind=self.engine, expire_on_commit=False)
+
+    def _reset_engine(self):
+        self.engine.dispose(close=True)
+        self._create_engine()
+
+    @staticmethod
+    def _should_reset_on_error(exc: OperationalError) -> bool:
+        message = str(exc).lower()
+        return "readonly" in message or ("sqlite" in message and "locked" in message)
+
+    def _execute_with_retry(self, operation: Callable[[Session], T]) -> T:
+        for attempt in range(2):
+            session = self.SessionLocal()
+            try:
+                return operation(session)
+            except OperationalError as exc:
+                session.rollback()
+                if self._should_reset_on_error(exc) and attempt == 0:
+                    logger.warning(
+                        "SQLite engine reported a read-only state; reinitializing connection."
+                    )
+                    self._reset_engine()
+                    continue
+                raise
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
+        raise RuntimeError("Failed to execute database operation after retries.")
 
     def _write_result_file(self, result: Result) -> Path:
         """Persist result data to JSON file and return its path."""
@@ -60,35 +96,37 @@ class ResultManager:
         workspace_path: Optional[str] = None,
     ) -> Result:
         """Save task result to database and file"""
-        session = self.SessionLocal()
+        def operation(session):
+            try:
+                result = Result(
+                    task_id=task_id,
+                    output=output,
+                    files_modified=json.dumps(files_modified) if files_modified else None,
+                    commands_executed=json.dumps(commands_executed) if commands_executed else None,
+                    processing_time_seconds=processing_time_seconds,
+                    git_commit_sha=git_commit_sha,
+                    git_pr_url=git_pr_url,
+                    git_branch=git_branch,
+                    workspace_path=workspace_path,
+                )
+
+                session.add(result)
+                session.flush()
+
+                result_file = self._write_result_file(result)
+
+                session.commit()
+                logger.info(f"Result saved for task {task_id}: {result_file}")
+                return result
+            except Exception:
+                session.rollback()
+                raise
+
         try:
-            result = Result(
-                task_id=task_id,
-                output=output,
-                files_modified=json.dumps(files_modified) if files_modified else None,
-                commands_executed=json.dumps(commands_executed) if commands_executed else None,
-                processing_time_seconds=processing_time_seconds,
-                git_commit_sha=git_commit_sha,
-                git_pr_url=git_pr_url,
-                git_branch=git_branch,
-                workspace_path=workspace_path,
-            )
-
-            session.add(result)
-            session.commit()
-
-            # Save to file
-            result_file = self._write_result_file(result)
-
-            logger.info(f"Result saved for task {task_id}: {result_file}")
-            return result
-
+            return self._execute_with_retry(operation)
         except Exception as e:
-            session.rollback()
             logger.error(f"Failed to save result: {e}")
             raise
-        finally:
-            session.close()
 
     def get_result(self, result_id: int) -> Optional[Result]:
         """Get result by ID"""
@@ -145,23 +183,25 @@ class ResultManager:
         git_branch: Optional[str] = None,
     ) -> Optional[Path]:
         """Update git commit information for a result record."""
-        session = self.SessionLocal()
+        def operation(session):
+            try:
+                result = session.query(Result).filter(Result.id == result_id).first()
+                if not result:
+                    logger.warning(f"Result {result_id} not found for commit update")
+                    return None
+
+                result.git_commit_sha = git_commit_sha
+                result.git_pr_url = git_pr_url
+                result.git_branch = git_branch
+                session.commit()
+
+                return self.results_path / f"task_{result.task_id}_{result.id}.json"
+            except Exception:
+                session.rollback()
+                raise
+
         try:
-            result = session.query(Result).filter(Result.id == result_id).first()
-            if not result:
-                logger.warning(f"Result {result_id} not found for commit update")
-                return None
-
-            result.git_commit_sha = git_commit_sha
-            result.git_pr_url = git_pr_url
-            result.git_branch = git_branch
-            session.commit()
-
-            return self.results_path / f"task_{result.task_id}_{result.id}.json"
-
+            return self._execute_with_retry(operation)
         except Exception as exc:
-            session.rollback()
             logger.error(f"Failed to update commit info for result {result_id}: {exc}")
             return None
-        finally:
-            session.close()

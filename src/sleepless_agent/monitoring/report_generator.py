@@ -35,6 +35,9 @@ class ReportGenerator:
         self.base_path = Path(base_path)
         self.base_path.mkdir(parents=True, exist_ok=True)
         self.daily_dir = self.base_path
+        self.projects_dir = self.base_path / "projects"
+        self.projects_dir.mkdir(parents=True, exist_ok=True)
+        self.recent_index = self.base_path / "RECENT.md"
 
     def append_task_completion(self, task_metrics: TaskMetrics, project_id: Optional[str] = None):
         """Append task completion entry to daily report
@@ -46,6 +49,8 @@ class ReportGenerator:
             task_metrics.project_id = project_id
         timestamp = task_metrics.timestamp or datetime.utcnow().isoformat()
         self._append_to_daily_report(task_metrics, timestamp)
+        if task_metrics.project_id:
+            self._append_to_project_report(task_metrics, timestamp)
 
     def _append_to_daily_report(self, task_metrics: TaskMetrics, timestamp: str):
         """Append entry to today's daily report"""
@@ -94,6 +99,25 @@ class ReportGenerator:
 
         return entry
 
+    def _append_to_project_report(self, task_metrics: TaskMetrics, timestamp: str) -> None:
+        """Append entry to a project-specific report."""
+        project_file = self.projects_dir / f"{task_metrics.project_id}.md"
+        self._ensure_project_report_header(project_file, task_metrics.project_id)
+
+        status_emoji = "✓" if task_metrics.status == "completed" else "✗"
+        entry = self._format_task_entry(task_metrics, status_emoji, timestamp)
+
+        try:
+            content = project_file.read_text()
+            summary_idx = content.find("\n## Summary")
+            if summary_idx != -1:
+                new_content = content[:summary_idx] + f"\n{entry}" + content[summary_idx:]
+            else:
+                new_content = content + f"\n{entry}"
+            project_file.write_text(new_content)
+        except Exception as exc:
+            logger.error(f"Failed to append to project report {task_metrics.project_id}: {exc}")
+
     def summarize_daily_report(self, date: Optional[str] = None):
         """Generate end-of-day summary for daily report
 
@@ -132,6 +156,32 @@ class ReportGenerator:
 
         except Exception as e:
             logger.error(f"Failed to summarize report: {e}")
+
+    def summarize_project_report(self, project_id: str):
+        """Summarize a project-level report."""
+        report_file = self.projects_dir / f"{project_id}.md"
+        if not report_file.exists():
+            logger.debug(f"No project report found for {project_id}")
+            return
+
+        try:
+            content = report_file.read_text()
+            summary = self._extract_summary_stats(content)
+            summary_text = self._format_summary(summary, f"Project {project_id}")
+
+            summary_idx = content.find("## Summary")
+            if summary_idx != -1:
+                next_section = content.find("\n##", summary_idx + 1)
+                if next_section != -1:
+                    new_content = content[:summary_idx] + summary_text + content[next_section:]
+                else:
+                    new_content = content[:summary_idx] + summary_text
+            else:
+                new_content = content + "\n" + summary_text
+
+            report_file.write_text(new_content)
+        except Exception as exc:
+            logger.error(f"Failed to summarize project report {project_id}: {exc}")
 
     def _extract_summary_stats(self, content: str) -> Dict:
         """Extract statistics from report content"""
@@ -189,7 +239,11 @@ class ReportGenerator:
         summary_text += f"- Total Tasks: {stats['total_tasks']}\n"
         summary_text += f"- Completed: {stats['completed_tasks']} ✓\n"
         summary_text += f"- Failed: {stats['failed_tasks']} ✗\n"
-        summary_text += f"- Success Rate: {stats['completed_tasks']/stats['total_tasks']*100:.1f}%" if stats['total_tasks'] > 0 else "- Success Rate: N/A\n"
+        if stats["total_tasks"] > 0:
+            success_rate = stats["completed_tasks"] / stats["total_tasks"] * 100
+            summary_text += f"- Success Rate: {success_rate:.1f}%\n"
+        else:
+            summary_text += "- Success Rate: N/A\n"
         summary_text += f"\n- Total Duration: {stats['total_duration']}s\n"
         summary_text += f"- Files Modified: {stats['total_files_modified']}\n"
         summary_text += f"- Commands Executed: {stats['total_commands']}\n"
@@ -206,7 +260,7 @@ class ReportGenerator:
             header += f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
             header += "## Tasks\n\n"
             header += "## Summary\n\n"
-            report_file.write_text(header)
+        report_file.write_text(header)
 
     def get_daily_report_path(self, date: Optional[datetime] = None) -> Path:
         """Return the filesystem path for the daily report."""
@@ -240,6 +294,10 @@ class ReportGenerator:
         reports = sorted([f.stem for f in self.base_path.glob("*.md")], reverse=True)
         return reports
 
+    def list_project_reports(self) -> List[str]:
+        """Return list of project IDs with reports."""
+        return sorted(f.stem for f in self.projects_dir.glob("*.md"))
+
     def cleanup_old_reports(self, days: int = 30):
         """Clean up reports older than specified days
 
@@ -258,3 +316,24 @@ class ReportGenerator:
                     logger.info(f"Deleted old report: {date_str}")
             except Exception as e:
                 logger.error(f"Failed to clean report {report_file}: {e}")
+
+    def update_recent_reports(self, retain: int = 7) -> None:
+        """Update the recent reports index with the latest daily reports."""
+        recent_dates = self.list_daily_reports()[:retain]
+        lines = ["# Recent Reports", ""]
+        for date in recent_dates:
+            lines.append(f"- {date}")
+        try:
+            self.recent_index.write_text("\n".join(lines) + "\n")
+        except Exception as exc:
+            logger.error(f"Failed to update recent reports index: {exc}")
+
+    def _ensure_project_report_header(self, report_file: Path, project_id: str) -> None:
+        """Ensure a project report is initialized with a header."""
+        if report_file.exists():
+            return
+        header = f"# Project Report - {project_id}\n\n"
+        header += f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
+        header += "## Tasks\n\n"
+        header += "## Summary\n\n"
+        report_file.write_text(header)

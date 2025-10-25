@@ -20,14 +20,14 @@ from loguru import logger
 class AITaskGenerator:
     """Generate creative task ideas using Claude API"""
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         """Initialize AI task generator
 
         Args:
             api_key: Optional Anthropic API key. If not provided, uses ANTHROPIC_API_KEY env var.
         """
         self.api_key = api_key
-        self.model = "claude-3-5-sonnet-20241022"
+        self.model = model 
 
     def _build_options(self) -> ClaudeAgentOptions:
         """Create SDK options for the current run."""

@@ -133,6 +133,18 @@ def command_check(ctx: CLIContext) -> int:
     entries = _load_metrics(ctx.logs_dir)
     metrics_summary = _summarize_metrics(entries)
 
+    # Get Pro plan usage info with threshold
+    pro_plan_usage_info = ""
+    try:
+        from sleepless_agent.monitoring.pro_plan_usage import ProPlanUsageChecker
+        checker = ProPlanUsageChecker(command=config.multi_agent_workflow.pro_plan_monitoring.usage_command)
+        messages_used, messages_limit, _ = checker.get_usage()
+        usage_percent = (messages_used / messages_limit * 100) if messages_limit > 0 else 0
+        threshold = config.multi_agent_workflow.pro_plan_monitoring.pause_threshold
+        pro_plan_usage_info = f" • Pro Usage: {usage_percent:.0f}% / {threshold:.0f}% limit"
+    except Exception as exc:
+        logger.debug(f"Could not fetch Pro plan usage for dashboard: {exc}")
+
     status = health.get("status", "unknown")
     status_lower = str(status).lower()
     status_emoji = {
@@ -149,6 +161,19 @@ def command_check(ctx: CLIContext) -> int:
     system = health.get("system", {})
     db = health.get("database", {})
     storage = health.get("storage", {})
+
+    header_text = Text()
+    header_text.append(f"{status_emoji} Sleepless Agent Dashboard\n", style="bold bright_magenta")
+    header_text.append(
+        f"Status: {str(status).upper()} • "
+        f"Uptime: {health.get('uptime_human', 'N/A')} • "
+        f"CPU: {system.get('cpu_percent', 'N/A')}% • "
+        f"Memory: {system.get('memory_percent', 'N/A')}% • "
+        f"Queue: {queue_status['pending']} pending / {queue_status['in_progress']} running"
+        f"{pro_plan_usage_info}",
+        style="dim",
+    )
+    header_panel = Panel(Align.center(header_text), border_style=status_style)
 
     health_table = Table.grid(padding=(0, 2))
     health_table.add_column(justify="right", style="bold cyan")
@@ -281,16 +306,14 @@ def command_check(ctx: CLIContext) -> int:
 
     now = datetime.utcnow()
     for task in running_tasks:
-        elapsed = None
         elapsed_str = "—"
         if task.started_at:
             elapsed = (now - task.started_at).total_seconds()
-            # Color-code based on duration: green < 30m, yellow < 1h, red >= 1h
-            if elapsed < 1800:  # < 30 minutes
+            if elapsed < 1800:
                 elapsed_str = f"[green]{format_duration(elapsed)}[/]"
-            elif elapsed < 3600:  # < 1 hour
+            elif elapsed < 3600:
                 elapsed_str = f"[yellow]{format_duration(elapsed)}[/]"
-            else:  # >= 1 hour (warning!)
+            else:
                 elapsed_str = f"[red bold]⚠️ {format_duration(elapsed)}[/]"
         running_table.add_row(
             str(task.id),
@@ -324,26 +347,21 @@ def command_check(ctx: CLIContext) -> int:
     pending_table.add_column("Summary", overflow="fold")
 
     for task in pending_tasks:
-        # Calculate task age
         age_seconds = (now - task.created_at).total_seconds()
         age_str = relative_time(task.created_at)
-
-        # Color-code age: normal < 1h, yellow < 24h, red >= 24h (stale!)
-        if age_seconds < 3600:  # < 1 hour
+        if age_seconds < 3600:
             age_display = age_str
-        elif age_seconds < 86400:  # < 24 hours
+        elif age_seconds < 86400:
             age_display = f"[yellow]{age_str}[/]"
-        else:  # >= 24 hours (stale!)
+        else:
             age_display = f"[red bold]⚠️ {age_str}[/]"
 
-        # Color-code priority
-        priority_display = task.priority.value
-        if task.priority.value == "serious":
+        if task.priority.value == TaskPriority.SERIOUS.value:
             priority_display = f"[red bold]{task.priority.value}[/]"
-        elif task.priority.value == "random":
+        elif task.priority.value == TaskPriority.RANDOM.value:
             priority_display = f"[cyan]{task.priority.value}[/]"
         else:
-            priority_display = f"[dim]{task.priority.value}[/]"
+            priority_display = f"[magenta]{task.priority.value}[/]"
 
         pending_table.add_row(
             str(task.id),
@@ -387,7 +405,6 @@ def command_check(ctx: CLIContext) -> int:
             )
         project_panel = Panel(project_table, border_style="bright_blue")
 
-    # Recent Errors Section
     failed_tasks = ctx.task_queue.get_failed_tasks(limit=5)
     errors_panel = None
     if failed_tasks:
@@ -426,6 +443,7 @@ def command_check(ctx: CLIContext) -> int:
     )
     recent_table.add_column("ID", style="bold")
     recent_table.add_column("Status")
+    recent_table.add_column("Priority")
     recent_table.add_column("Project", style="cyan")
     recent_table.add_column("When")
     recent_table.add_column("Summary", overflow="fold")
@@ -441,9 +459,28 @@ def command_check(ctx: CLIContext) -> int:
             TaskStatus.CANCELLED: "dim",
         }
         status_color = status_colors.get(task.status, "white")
+        priority_value = None
+        if isinstance(getattr(task, "priority", None), TaskPriority):
+            priority_value = task.priority.value
+        elif getattr(task, "priority", None):
+            priority_value = str(task.priority)
+
+        priority_display = "—"
+        if priority_value:
+            label = priority_value.replace("_", " ").title()
+            if priority_value == TaskPriority.SERIOUS.value:
+                priority_display = f"[red bold]{label}[/]"
+            elif priority_value == TaskPriority.GENERATED.value:
+                priority_display = f"[magenta]{label}[/]"
+            elif priority_value == TaskPriority.RANDOM.value:
+                priority_display = f"[cyan]{label}[/]"
+            else:
+                priority_display = label
+
         recent_table.add_row(
             str(task.id),
             f"[{status_color}]{icon} {task.status.value}[/]",
+            priority_display,
             task.project_name or task.project_id or "—",
             relative_time(task.created_at),
             shorten(task.description),
@@ -453,21 +490,14 @@ def command_check(ctx: CLIContext) -> int:
     # Create hierarchical layout with regions
     layout = Layout(name="root")
     layout.split_column(
-        Layout(name="header", size=3),
+        Layout(name="header", size=5),
         Layout(name="top_section", size=10),
         Layout(name="middle_section", size=12),
         Layout(name="tasks_section"),
     )
 
-    # Header
-    layout["header"].update(
-        Panel(
-            Text("Sleepless Agent Dashboard", style="bold bright_magenta"),
-            border_style="bright_magenta",
-        )
-    )
+    layout["header"].update(header_panel)
 
-    # Top section: System Health + Storage
     layout["top_section"].split_row(
         Layout(name="health", ratio=1),
         Layout(name="storage", ratio=1),
@@ -475,7 +505,6 @@ def command_check(ctx: CLIContext) -> int:
     layout["top_section"]["health"].update(health_panel)
     layout["top_section"]["storage"].update(storage_panel)
 
-    # Middle section: Queue + Metrics
     layout["middle_section"].split_row(
         Layout(name="queue", ratio=1),
         Layout(name="metrics", ratio=1),
@@ -483,7 +512,7 @@ def command_check(ctx: CLIContext) -> int:
     layout["middle_section"]["queue"].update(queue_panel)
     layout["middle_section"]["metrics"].update(metrics_panel)
 
-    # Print top sections using Layout (header, health, storage, queue, metrics)
+    # Print layout (header + summary panels)
     console.print()
     console.print(layout)
 

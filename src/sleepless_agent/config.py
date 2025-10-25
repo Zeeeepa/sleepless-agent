@@ -49,9 +49,14 @@ class MultiAgentPlanConfig(BaseSettings):
 
 
 class ProPlanMonitoringConfig(BaseSettings):
-    """Pro plan usage monitoring configuration"""
+    """Pro plan usage monitoring configuration
+
+    Controls Claude Code Pro plan usage tracking and task scheduling decisions.
+    The system monitors your Pro plan message limit (typically 40/5hr window) and
+    automatically pauses new task generation when usage exceeds the pause_threshold.
+    """
     enabled: bool = True
-    pause_threshold: float = 85.0  # Pause at 85% of usage limit
+    pause_threshold: float = 85.0  # Stop generating new tasks when usage >= 85% of limit
     usage_command: str = "claude /usage"  # CLI command to check usage
     check_frequency: str = "after_task"  # When to check: after_task | before_task | both
 
@@ -90,6 +95,7 @@ class AutoGenerationConfig(BaseSettings):
 
     # Task type distribution
     random_ratio: float = 0.6  # Fraction of auto-generated tasks kept low priority vs escalated to SERIOUS
+    ai_model: str = "claude-sonnet-4-5-20250929"
 
 
 class AgentConfig(BaseSettings):

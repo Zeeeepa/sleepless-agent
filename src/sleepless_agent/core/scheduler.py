@@ -257,6 +257,9 @@ class SmartScheduler:
         self._init_current_window()
         self._last_budget_exhausted_log: Optional[datetime] = None
         self._budget_exhausted_logged = False
+        self.usage_pause_until: Optional[datetime] = None
+        self._usage_pause_grace = timedelta(minutes=1)
+        self._usage_pause_default = timedelta(minutes=5)
 
     def _init_current_window(self):
         """Initialize current credit window"""
@@ -274,6 +277,19 @@ class SmartScheduler:
         Returns:
             Tuple of (should_schedule: bool, status_message: str)
         """
+        now = datetime.utcnow()
+
+        if self.use_live_usage_check and self.usage_pause_until:
+            if now < self.usage_pause_until:
+                remaining = self.usage_pause_until - now
+                message = (
+                    f"Waiting for Pro plan reset at {self.usage_pause_until.strftime('%H:%M:%S')} "
+                    f"({self._format_remaining(remaining)} remaining)"
+                )
+                return False, message
+            # Pause window has expired; resume normal checks.
+            self.usage_pause_until = None
+
         # Try live usage check first
         if self.use_live_usage_check and self.usage_checker:
             try:
@@ -281,12 +297,18 @@ class SmartScheduler:
                 usage_percent = (messages_used / messages_limit * 100) if messages_limit > 0 else 0
 
                 if usage_percent >= self.pause_threshold_percent:
+                    pause_base = reset_time if reset_time > now else now + self._usage_pause_default
+                    pause_until = pause_base + self._usage_pause_grace
+                    self.usage_pause_until = pause_until
+                    remaining = pause_until - now
                     message = (
                         f"Pro plan usage at {usage_percent:.0f}% exceeds threshold {self.pause_threshold_percent:.0f}%; "
-                        f"skipping task scheduling (resets at {reset_time.strftime('%H:%M:%S')})"
+                        f"waiting for reset at {reset_time.strftime('%H:%M:%S')} "
+                        f"(resume in {self._format_remaining(remaining)})"
                     )
                     return False, message
                 else:
+                    self.usage_pause_until = None
                     return True, f"Pro plan usage at {usage_percent:.0f}% - ready to schedule"
 
             except Exception as e:
@@ -314,6 +336,28 @@ class SmartScheduler:
             return False, message
         else:
             return True, f"Budget available (${float(self.budget_manager.get_remaining_budget()):.2f} remaining)"
+
+    @staticmethod
+    def _format_remaining(delta: timedelta) -> str:
+        """Render a short human-readable remaining time string."""
+        total_seconds = int(max(delta.total_seconds(), 0))
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        parts = []
+        if hours:
+            parts.append(f"{hours}h")
+        if minutes:
+            parts.append(f"{minutes}m")
+        if not parts and seconds:
+            parts.append(f"{seconds}s")
+        return " ".join(parts) if parts else "0s"
+
+    def get_pause_remaining_seconds(self) -> Optional[float]:
+        """Return remaining pause duration in seconds if scheduling is halted."""
+        if not (self.use_live_usage_check and self.usage_pause_until):
+            return None
+        remaining = (self.usage_pause_until - datetime.utcnow()).total_seconds()
+        return remaining if remaining > 0 else None
 
     def get_next_tasks(self) -> List[Task]:
         """Get next tasks to execute respecting concurrency, priorities, and budget"""
