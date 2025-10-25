@@ -3,7 +3,7 @@
 import json
 import random
 from datetime import datetime
-from typing import Optional
+from typing import Optional, TypeAlias
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -23,9 +23,14 @@ from sleepless_agent.monitoring.logging import get_logger
 logger = get_logger(__name__)
 
 from sleepless_agent.core.models import Task, TaskPriority, TaskStatus, TaskType, GenerationHistory
+from typing import TypeAlias
+
 from sleepless_agent.scheduling.scheduler import BudgetManager
 from sleepless_agent.scheduling.time_utils import rate_limit_for_time
-from sleepless_agent.config import AutoGenerationConfig, AutoTaskPromptConfig
+from sleepless_agent.utils.config import ConfigNode
+
+AutoGenerationConfig: TypeAlias = ConfigNode
+AutoTaskPromptConfig: TypeAlias = ConfigNode
 
 
 class AutoTaskGenerator:

@@ -1,0 +1,95 @@
+slack:
+  bot_token: ""
+  app_token: ""
+  auto_thread_replies: true
+  notification_enabled: true
+
+claude_code:
+  binary_path: claude
+  default_timeout: 1800
+  cleanup_random_workspaces: true
+  preserve_serious_workspaces: true
+
+agent:
+  workspace_root: ./workspace
+  shared_workspace: ./workspace/shared
+  db_path: ./workspace/data/tasks.db
+  results_path: ./workspace/data/results
+  max_parallel_tasks: 1
+  task_timeout_seconds: 1800
+
+auto_generation:
+  enabled: true
+  usage_threshold_percent: 60
+  budget_ceiling_percent: 85
+  rate_limit_night: 2
+  rate_limit_day: 1
+  prompts:
+    - name: default_improvement
+      prompt: |-
+        You are a software development assistant. Generate ONE specific, actionable improvement idea for a Generic Python project.
+
+        Generate task ideas in categories like:
+        - Code quality (refactoring, optimization, testing)
+        - Documentation (docstrings, README, examples)
+        - Features (new functionality, enhancements)
+        - Architecture (design improvements, modularity)
+        - Performance (caching, algorithms, database queries)
+        - Security (input validation, authentication, encryption)
+
+        IMPORTANT: Classify the task type and prefix your response with [NEW] or [REFINE].
+        Respond with the type prefix followed by a single task description in 1-2 sentences.
+      weight: 1
+      model:
+      log_severity: error
+  random_ratio: 0.6
+  ai_model: claude-sonnet-4-5-20250929
+  task_type:
+    default_for_autogen: new
+    source_code_paths:
+      - src/
+      - pyproject.toml
+      - README.md
+      - .gitignore
+    exclude_patterns:
+      - __pycache__
+      - "*.pyc"
+      - .git
+      - .venv
+      - venv
+      - "*.egg-info"
+      - dist
+      - build
+      - workspace
+
+multi_agent_workflow:
+  enabled: true
+  planner:
+    enabled: true
+    max_turns: 3
+    timeout_seconds: 300
+  worker:
+    enabled: true
+    max_turns: 3
+    timeout_seconds: 1800
+  evaluator:
+    enabled: true
+    max_turns: 3
+    timeout_seconds: 300
+  readme:
+    auto_create: true
+    auto_update: true
+    preserve_history: true
+  plan:
+    auto_create: true
+    preserve_plan: true
+    include_context: true
+  pro_plan_monitoring:
+    enabled: true
+    pause_threshold: 85.0
+    usage_command: claude /usage
+    check_frequency: after_task
+    auto_generate_refinements: true
+    low_usage_threshold: 60.0
+    max_auto_tasks_per_session: 3
+
