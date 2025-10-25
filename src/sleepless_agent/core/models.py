@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import Column, DateTime, Enum as SQLEnum, Integer, String, Text, create_engine
+from sqlalchemy import Column, DateTime, Enum as SQLEnum, Index, Integer, String, Text, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session
 
@@ -67,6 +67,21 @@ class Task(Base):
 
     def __repr__(self):
         return f"<Task(id={self.id}, priority={self.priority}, status={self.status})>"
+
+    # Define indexes for query optimization
+    __table_args__ = (
+        # Single-column indexes for frequently filtered columns
+        Index('ix_task_status', 'status'),
+        Index('ix_task_project_id', 'project_id'),
+        Index('ix_task_created_at', 'created_at'),
+
+        # Composite indexes for common query patterns
+        # Optimizes get_projects() and project-specific queries
+        Index('ix_task_project_status', 'project_id', 'status'),
+
+        # Optimizes get_pending_tasks() with status filter + created_at ordering
+        Index('ix_task_status_created', 'status', 'created_at'),
+    )
 
 
 class Result(Base):

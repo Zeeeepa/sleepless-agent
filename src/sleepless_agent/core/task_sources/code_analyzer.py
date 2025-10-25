@@ -4,7 +4,8 @@ import re
 from pathlib import Path
 from typing import List, Optional, Dict
 
-from loguru import logger
+from sleepless_agent.logging import get_logger
+logger = get_logger(__name__)
 
 
 class CodeAnalyzer:

@@ -7,7 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
-from loguru import logger
+from sleepless_agent.logging import get_logger
+logger = get_logger(__name__)
 
 
 class GitManager:

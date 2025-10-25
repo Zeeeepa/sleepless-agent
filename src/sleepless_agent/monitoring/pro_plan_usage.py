@@ -21,14 +21,45 @@ if pty is not None:  # pragma: no cover - platform dependent
 else:  # pragma: no cover - platform dependent
     select = None  # type: ignore[assignment]
 
-from loguru import logger
+from sleepless_agent.logging import get_logger
+logger = get_logger(__name__)
+
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 class ProPlanUsageChecker:
-    """Check Claude Code Pro plan usage via CLI"""
+    """Check Claude Code Pro plan usage via CLI, tracking percentage and reset time."""
 
-    def __init__(self, command: str = "claude usage"):
+    TIMEZONE_ALIASES = {
+        "PT": "America/Los_Angeles",
+        "PST": "America/Los_Angeles",
+        "PDT": "America/Los_Angeles",
+        "MT": "America/Denver",
+        "MST": "America/Denver",
+        "MDT": "America/Denver",
+        "CT": "America/Chicago",
+        "CST": "America/Chicago",
+        "CDT": "America/Chicago",
+        "ET": "America/New_York",
+        "EST": "America/New_York",
+        "EDT": "America/New_York",
+        "AKST": "America/Anchorage",
+        "AKDT": "America/Anchorage",
+        "HST": "Pacific/Honolulu",
+        "BST": "Europe/London",
+        "CEST": "Europe/Berlin",
+        "CET": "Europe/Berlin",
+        "IST": "Asia/Kolkata",
+        "AEST": "Australia/Sydney",
+        "AEDT": "Australia/Sydney",
+        "JST": "Asia/Tokyo",
+        "KST": "Asia/Seoul",
+    }
+
+    def __init__(
+        self,
+        command: str = "claude usage",
+    ):
         """Initialize usage checker
 
         Args:
@@ -36,18 +67,12 @@ class ProPlanUsageChecker:
         """
         self.command = command
         self.last_check_time: Optional[datetime] = None
-        self.cached_usage: Optional[Tuple[int, int, datetime]] = None
+        self.cached_usage: Optional[Tuple[float, Optional[datetime]]] = None
         self.cache_duration_seconds = 60
+        self.last_timezone_str: Optional[str] = None
 
-    def get_usage(self) -> Tuple[int, int, datetime]:
-        """Execute CLI command and parse usage response
-
-        Returns:
-            Tuple of (messages_used, messages_limit, reset_time)
-
-        Raises:
-            RuntimeError: If command fails or output can't be parsed
-        """
+    def get_usage(self) -> Tuple[float, Optional[datetime]]:
+        """Execute CLI command and parse usage response as percentage plus reset time."""
         try:
             # Check cache first (valid for 60 seconds)
             if self.cached_usage and self.last_check_time:
@@ -86,22 +111,34 @@ class ProPlanUsageChecker:
 
             # Parse output
             try:
-                messages_used, messages_limit, reset_time = self._parse_usage_output(cleaned_output)
+                usage_percent, reset_time = self._parse_usage_output(cleaned_output)
             except RuntimeError as parse_error:
                 logger.warning(f"Could not interpret usage output: {parse_error}")
                 return self._fallback_usage()
 
             # Cache result
-            self.cached_usage = (messages_used, messages_limit, reset_time)
+            self.cached_usage = (usage_percent, reset_time)
             self.last_check_time = datetime.utcnow()
 
-            # Note: 85% threshold is used by scheduler to decide whether to generate new tasks
+            # Format reset time with timezone info if available
+            if reset_time:
+                if self.last_timezone_str:
+                    tz = self._resolve_timezone(self.last_timezone_str)
+                    if tz:
+                        reset_dt_tz = reset_time.replace(tzinfo=timezone.utc).astimezone(tz)
+                        reset_label = reset_dt_tz.strftime("%I:%M%p").lower() + f" ({self.last_timezone_str})"
+                    else:
+                        reset_label = reset_time.strftime("%H:%M:%S")
+                else:
+                    reset_label = reset_time.strftime("%H:%M:%S")
+            else:
+                reset_label = "unknown"
+
             logger.info(
-                f"Pro plan usage: {messages_used}/{messages_limit} "
-                f"({messages_used/messages_limit*100:.1f}% / 85% pause threshold) - resets at {reset_time.strftime('%H:%M:%S')}"
+                f"Pro plan usage: {usage_percent:.1f}% - resets at {reset_label}"
             )
 
-            return messages_used, messages_limit, reset_time
+            return usage_percent, reset_time
 
         except RuntimeError:
             raise
@@ -264,93 +301,71 @@ class ProPlanUsageChecker:
 
         return "\n".join(cleaned_lines)
 
-    def _parse_usage_output(self, output: str) -> Tuple[int, int, datetime]:
-        """Parse 'claude usage' command output
-
-        Handles multiple output formats:
-        - "61% used" (Claude Code CLI format) - estimates count from percentage
-        - "You have used 28 of 40 messages. Resets in 2 hours 45 minutes."
-        - "Messages: 28/40 (70%)"
-        - "Usage: 28 messages used, 12 remaining"
-
-        Args:
-            output: Raw output from claude usage command
-
-        Returns:
-            Tuple of (messages_used, messages_limit, reset_time)
-
-        Raises:
-            RuntimeError: If output format can't be parsed
-        """
+    def _parse_usage_output(self, output: str) -> Tuple[float, Optional[datetime]]:
+        """Parse 'claude usage' command output for percentage and reset time."""
         lines = output.strip().split("\n")
 
-        messages_used = None
-        messages_limit = None
-        reset_time = None
+        usage_percent: Optional[float] = None
 
-        # Try format 0: "61% used" (Claude Code CLI output)
-        # This is the primary format for `claude /usage`
+        # Primary format: "<number>% used"
         for line in lines:
-            match = re.search(r'(\d+)%\s+used', line, re.IGNORECASE)
+            if not re.search(r"(used|usage|messages|remaining|limit)", line, re.IGNORECASE):
+                continue
+            match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*(?:used|usage|of|remaining)?', line, re.IGNORECASE)
             if match:
-                percent_used = int(match.group(1))
-                # Estimate counts based on typical Pro plan limit (40 messages)
-                # This is for display/calculation purposes only
-                messages_limit = 40  # Standard Pro plan limit per 5-hour window
-                messages_used = int((percent_used / 100.0) * messages_limit)
-                logger.debug(f"Parsed percentage format: {percent_used}% used → ~{messages_used}/{messages_limit}")
+                usage_percent = float(match.group(1))
+                logger.debug(f"Parsed direct percentage format: {usage_percent:.2f}%")
                 break
 
-        # Try format 1: "You have used 28 of 40 messages"
-        if messages_used is None:
+        # Ratios like "You have used 28 of 40 messages"
+        if usage_percent is None:
             for line in lines:
                 match = re.search(r"used\s+(\d+)\s+of\s+(\d+)\s+messages", line, re.IGNORECASE)
                 if match:
-                    messages_used = int(match.group(1))
-                    messages_limit = int(match.group(2))
-                    logger.debug(f"Parsed format 1: {messages_used}/{messages_limit}")
-                    break
+                    used = int(match.group(1))
+                    total = int(match.group(2))
+                    if total > 0:
+                        usage_percent = used / total * 100
+                        logger.debug(f"Parsed ratio format (used/of): {usage_percent:.2f}%")
+                        break
 
-        # Try format 2: "Messages: 28/40"
-        if messages_used is None:
+        # Ratios like "Messages: 28/40"
+        if usage_percent is None:
             for line in lines:
-                match = re.search(r"Messages?:\s*(\d+)/(\d+)", line, re.IGNORECASE)
+                match = re.search(r"Messages?:\s*(\d+)\s*/\s*(\d+)", line, re.IGNORECASE)
                 if match:
-                    messages_used = int(match.group(1))
-                    messages_limit = int(match.group(2))
-                    logger.debug(f"Parsed format 2: {messages_used}/{messages_limit}")
-                    break
+                    used = int(match.group(1))
+                    total = int(match.group(2))
+                    if total > 0:
+                        usage_percent = used / total * 100
+                        logger.debug(f"Parsed ratio format (slash): {usage_percent:.2f}%")
+                        break
 
-        # Try format 3: "28 messages used, 12 remaining"
-        if messages_used is None:
+        # Format "28 messages used, 12 remaining"
+        if usage_percent is None:
             for line in lines:
                 match = re.search(r"(\d+)\s+messages?\s+used", line, re.IGNORECASE)
                 if match:
-                    messages_used = int(match.group(1))
-
-                    # Find remaining
+                    used = int(match.group(1))
                     remaining_match = re.search(r"(\d+)\s+remaining", line, re.IGNORECASE)
                     if remaining_match:
                         remaining = int(remaining_match.group(1))
-                        messages_limit = messages_used + remaining
-                        logger.debug(f"Parsed format 3: {messages_used}/{messages_limit}")
+                        total = used + remaining
+                        if total > 0:
+                            usage_percent = used / total * 100
+                            logger.debug(f"Parsed used/remaining format: {usage_percent:.2f}%")
                     break
 
-        if messages_used is None or messages_limit is None:
+        if usage_percent is None:
             displayed = output.replace("\n", " ").strip()
             if len(displayed) > 120:
                 displayed = f"{displayed[:117]}..."
-            raise RuntimeError(f"Could not parse usage from '{displayed}'")
+            raise RuntimeError(f"Could not parse usage percentage from '{displayed}'")
 
-        # Parse reset time
+        usage_percent = max(0.0, min(100.0, usage_percent))
+
         reset_time = self._parse_reset_time(output)
-
-        if reset_time is None:
-            # Fallback: assume 5 hour window
-            logger.warning("Could not parse reset time, assuming 5 hour window")
-            reset_time = datetime.utcnow() + timedelta(hours=5)
-
-        return messages_used, messages_limit, reset_time
+        return usage_percent, reset_time
 
     def _parse_reset_time(self, output: str) -> Optional[datetime]:
         """Parse reset time from output
@@ -367,27 +382,7 @@ class ProPlanUsageChecker:
         Returns:
             datetime of reset, or None if can't parse
         """
-        def _convert_with_timezone(hour: int, minute: int, second: int, tz_label: Optional[str]) -> Optional[datetime]:
-            if not tz_label:
-                return None
-
-            label = tz_label.strip()
-            if not label:
-                return None
-
-            if label.upper() in {"UTC", "GMT"}:
-                tzinfo = timezone.utc
-            else:
-                try:
-                    tzinfo = ZoneInfo(label)
-                except ZoneInfoNotFoundError:
-                    return None
-
-            local_now = datetime.now(tz=tzinfo)
-            reset_local = local_now.replace(hour=hour % 24, minute=minute, second=second, microsecond=0)
-            if reset_local < local_now:
-                reset_local += timedelta(days=1)
-            return reset_local.astimezone(timezone.utc).replace(tzinfo=None)
+        now_utc = datetime.utcnow()
 
         # Try: "Resets 2:59am (America/New_York)" or "Resets 7pm (America/New_York)"
         match = re.search(
@@ -401,24 +396,23 @@ class ProPlanUsageChecker:
                 minute = int(match.group(2)) if match.group(2) else 0
                 meridiem = match.group(3).lower()
                 timezone_str = match.group(4)  # e.g., "America/New_York"
+                self.last_timezone_str = timezone_str
 
                 if meridiem == "pm" and hour != 12:
                     hour += 12
                 elif meridiem == "am" and hour == 12:
                     hour = 0
 
-                reset_time = _convert_with_timezone(hour, minute, 0, timezone_str)
+                reset_time = self._convert_with_timezone(hour, minute, 0, timezone_str)
                 if reset_time is None:
-                    reset_time = datetime.utcnow().replace(
-                        hour=hour % 24, minute=minute, second=0, microsecond=0
-                    )
-
-                if reset_time < datetime.utcnow():
-                    reset_time += timedelta(days=1)
-
+                    reset_time = self._current_utc_with_time(hour, minute, 0, now_utc=now_utc)
                 logger.debug(
-                    f"Parsed reset time: {hour % 24:02d}:{minute:02d} "
-                    f"({meridiem}) {timezone_str} → {reset_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                    "Parsed reset time: {:02d}:{:02d} {} ({}) → {}",
+                    hour % 24,
+                    minute,
+                    meridiem,
+                    timezone_str,
+                    reset_time.strftime("%Y-%m-%d %H:%M:%S"),
                 )
                 return reset_time
             except ValueError as exc:
@@ -437,6 +431,8 @@ class ProPlanUsageChecker:
                 second = int(match.group(3)) if match.group(3) else 0
                 meridiem = match.group(4).lower() if match.group(4) else None
                 timezone_str = match.group(5) or match.group(6)
+                if timezone_str:
+                    self.last_timezone_str = timezone_str
 
                 if meridiem:
                     if meridiem == "pm" and hour != 12:
@@ -444,13 +440,9 @@ class ProPlanUsageChecker:
                     elif meridiem == "am" and hour == 12:
                         hour = 0
 
-                reset_time = _convert_with_timezone(hour, minute, second, timezone_str)
+                reset_time = self._convert_with_timezone(hour, minute, second, timezone_str)
                 if reset_time is None:
-                    reset_time = datetime.utcnow().replace(
-                        hour=hour % 24, minute=minute, second=second, microsecond=0
-                    )
-                if reset_time < datetime.utcnow():
-                    reset_time += timedelta(days=1)
+                    reset_time = self._current_utc_with_time(hour, minute, second, now_utc=now_utc)
                 return reset_time
             except ValueError:
                 pass
@@ -464,19 +456,19 @@ class ProPlanUsageChecker:
         if match:
             hours = int(match.group(1))
             minutes = int(match.group(2))
-            return datetime.utcnow() + timedelta(hours=hours, minutes=minutes)
+            return now_utc + timedelta(hours=hours, minutes=minutes)
 
         # Try: "Resets in 3h"
         match = re.search(r"Resets?\s+in\s+(\d+)\s*h", output, re.IGNORECASE)
         if match:
             hours = int(match.group(1))
-            return datetime.utcnow() + timedelta(hours=hours)
+            return now_utc + timedelta(hours=hours)
 
         # Try: "Resets in 45m"
         match = re.search(r"Resets?\s+in\s+(\d+)\s*m", output, re.IGNORECASE)
         if match:
             minutes = int(match.group(1))
-            return datetime.utcnow() + timedelta(minutes=minutes)
+            return now_utc + timedelta(minutes=minutes)
 
         # Try: "Next reset: 14:30"
         match = re.search(
@@ -490,21 +482,91 @@ class ProPlanUsageChecker:
                 minute = int(match.group(2))
                 second = int(match.group(3)) if match.group(3) else 0
                 timezone_str = match.group(4)
-                reset_time = _convert_with_timezone(hour, minute, second, timezone_str)
+                if timezone_str:
+                    self.last_timezone_str = timezone_str
+                reset_time = self._convert_with_timezone(hour, minute, second, timezone_str)
                 if reset_time is None:
-                    reset_time = datetime.utcnow().replace(
-                        hour=hour % 24, minute=minute, second=second, microsecond=0
-                    )
-
-                # If time is in past, add 1 day
-                if reset_time < datetime.utcnow():
-                    reset_time += timedelta(days=1)
-
+                    reset_time = self._current_utc_with_time(hour, minute, second, now_utc=now_utc)
                 return reset_time
             except ValueError:
                 pass
 
         return None
+
+    def _convert_with_timezone(
+        self,
+        hour: int,
+        minute: int,
+        second: int,
+        tz_label: Optional[str],
+    ) -> Optional[datetime]:
+        tzinfo = self._resolve_timezone(tz_label)
+        if tzinfo is None:
+            return None
+
+        local_now = datetime.now(tz=tzinfo)
+        reset_local = local_now.replace(hour=hour % 24, minute=minute, second=second, microsecond=0)
+        if reset_local <= local_now:
+            reset_local += timedelta(days=1)
+        return reset_local.astimezone(timezone.utc).replace(tzinfo=None)
+
+    @classmethod
+    def _resolve_timezone(cls, tz_label: Optional[str]) -> Optional[timezone]:
+        if tz_label is None:
+            return None
+
+        label = tz_label.strip()
+        if not label:
+            return None
+
+        upper_label = label.upper()
+        alias_target = cls.TIMEZONE_ALIASES.get(upper_label)
+        if alias_target:
+            label = alias_target
+            upper_label = label.upper()
+
+        if upper_label in {"UTC", "GMT"}:
+            return timezone.utc
+
+        offset_tz = cls._parse_utc_offset(label)
+        if offset_tz is not None:
+            return offset_tz
+
+        try:
+            return ZoneInfo(label)
+        except ZoneInfoNotFoundError:
+            logger.debug("Unknown timezone label received from CLI: {}", label)
+            return None
+
+    @staticmethod
+    def _parse_utc_offset(label: str) -> Optional[timezone]:
+        sanitized = label.strip().upper().replace(" ", "")
+        match = re.fullmatch(r"(?:UTC|GMT)?([+-])(\d{1,2})(?::?(\d{2}))?", sanitized)
+        if not match:
+            return None
+
+        sign = 1 if match.group(1) == "+" else -1
+        hours = int(match.group(2))
+        minutes = int(match.group(3)) if match.group(3) else 0
+        if hours > 14 or minutes >= 60:
+            return None
+
+        delta = timedelta(hours=sign * hours, minutes=sign * minutes)
+        return timezone(delta)
+
+    @staticmethod
+    def _current_utc_with_time(
+        hour: int,
+        minute: int,
+        second: int,
+        *,
+        now_utc: Optional[datetime] = None,
+    ) -> datetime:
+        reference = now_utc or datetime.utcnow()
+        candidate = reference.replace(hour=hour % 24, minute=minute, second=second, microsecond=0)
+        if candidate <= reference:
+            candidate += timedelta(days=1)
+        return candidate
 
     def check_should_pause(self, threshold_percent: float = 85.0) -> Tuple[bool, Optional[datetime]]:
         """Check if usage exceeds threshold
@@ -516,15 +578,12 @@ class ProPlanUsageChecker:
             Tuple of (should_pause: bool, reset_time: datetime or None)
         """
         try:
-            messages_used, messages_limit, reset_time = self.get_usage()
-            percent_used = (messages_used / messages_limit * 100) if messages_limit > 0 else 0
-
-            should_pause = percent_used >= threshold_percent
+            usage_percent, reset_time = self.get_usage()
+            should_pause = usage_percent >= threshold_percent
 
             if should_pause:
                 logger.warning(
-                    f"Usage threshold exceeded: {messages_used}/{messages_limit} "
-                    f"({percent_used:.1f}% >= {threshold_percent}%)"
+                    f"Usage threshold exceeded: {usage_percent:.1f}% >= {threshold_percent:.1f}%"
                 )
 
             return should_pause, reset_time
@@ -534,7 +593,7 @@ class ProPlanUsageChecker:
             # Return False to not pause on error
             return False, None
 
-    def _fallback_usage(self) -> Tuple[int, int, datetime]:
+    def _fallback_usage(self) -> Tuple[float, Optional[datetime]]:
         """
         Provide cached usage if available, otherwise return a conservative default.
         """
@@ -542,11 +601,8 @@ class ProPlanUsageChecker:
             logger.debug("Using cached usage data after failed usage command.")
             return self.cached_usage
 
-        reset_time = datetime.utcnow() + timedelta(hours=5)
-        fallback = (0, 40, reset_time)
+        fallback = (0.0, None)
         self.cached_usage = fallback
         self.last_check_time = datetime.utcnow()
-        logger.info(
-            "Defaulting to 0/40 usage with 5-hour reset window due to missing usage data."
-        )
+        logger.info("Defaulting to 0.0%% usage with unknown reset time due to missing usage data.")
         return fallback

@@ -6,7 +6,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from loguru import logger
+from sleepless_agent.logging import get_logger
+logger = get_logger(__name__)
 
 
 class HealthMonitor:

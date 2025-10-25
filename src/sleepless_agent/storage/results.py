@@ -5,7 +5,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional, TypeVar
 
-from loguru import logger
+from sleepless_agent.logging import get_logger
+logger = get_logger(__name__)
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.exc import OperationalError

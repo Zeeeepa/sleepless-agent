@@ -9,7 +9,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Set, List
 
-from loguru import logger
+from sleepless_agent.logging import get_logger
+logger = get_logger(__name__)
 
 from sleepless_agent.interfaces.bot import SlackBot
 from sleepless_agent.execution.claude_code_executor import ClaudeCodeExecutor
@@ -24,10 +25,6 @@ from sleepless_agent.core.task_queue import TaskQueue
 from sleepless_agent.core.auto_generator import AutoTaskGenerator
 from sleepless_agent.core.workspace import WorkspaceSetup
 from sleepless_agent.core.live_status import LiveStatusTracker
-
-# Setup loguru
-logger.remove()  # Remove default handler
-logger.add(sys.stderr, format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}", level="INFO")
 
 
 class SleepleassAgent:
@@ -47,6 +44,9 @@ class SleepleassAgent:
         self._init_directories()
         engine = init_db(str(self.config.agent.db_path))
         self.task_queue = TaskQueue(str(self.config.agent.db_path))
+
+        # Create seed task if workspace is fresh
+        self._create_seed_task_if_needed()
 
         live_status_path = Path(self.config.agent.db_path).parent / "live_status.json"
         self.live_status_tracker = LiveStatusTracker(live_status_path)
@@ -123,6 +123,42 @@ class SleepleassAgent:
         self.config.agent.shared_workspace.mkdir(parents=True, exist_ok=True)
         self.config.agent.results_path.mkdir(parents=True, exist_ok=True)
         self.config.agent.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _create_seed_task_if_needed(self):
+        """Create a seed task if workspace is fresh (no tasks in queue)"""
+        pending_count = len(self.task_queue.get_pending_tasks())
+
+        if pending_count > 0:
+            logger.debug(f"Workspace has {pending_count} pending tasks, skipping seed task creation")
+            return
+
+        seed_task_marker = self.config.agent.db_path.parent / ".seed_task_created"
+        if seed_task_marker.exists():
+            logger.debug("Seed task already created in previous runs")
+            return
+
+        # Create seed task for context engineering on multi-agent systems
+        seed_description = (
+            "Research and document best practices for designing multi-agent systems in Python: "
+            "explore architectural patterns for agent coordination, context sharing, task distribution, "
+            "and state management. Investigate frameworks like LangChain, AutoGen, CrewAI, and custom approaches. "
+            "Create comprehensive documentation with examples, trade-offs, and recommendations that can inform "
+            "the evolution of this sleepless-agent system. Focus on practical patterns for 24/7 autonomous operation, "
+            "budget management, and cross-agent knowledge sharing."
+        )
+
+        self.task_queue.add_task(
+            description=seed_description,
+            priority=TaskPriority.RANDOM
+        )
+
+        # Mark that we've created the seed task
+        try:
+            seed_task_marker.touch()
+        except Exception as exc:
+            logger.debug(f"Failed to write seed task marker: {exc}")
+
+        logger.info(f"Created seed task for workspace bootstrap (context engineering on multi-agent systems)")
 
     def _signal_handler(self, sig, _frame):
         """Handle shutdown signals"""
@@ -282,17 +318,22 @@ class SleepleassAgent:
 
     async def _execute_task(self, task):
         """Execute a single task"""
-        separator = "=" * 72
         task_summary: Optional[str] = None
+        task_log = logger.bind(
+            component="daemon",
+            task_id=task.id,
+            priority=task.priority.value if task.priority else "unknown",
+            project_id=task.project_id,
+            project_name=task.project_name,
+        )
         try:
-            # Mark as in progress
             self.task_queue.mark_in_progress(task.id)
 
-            logger.info(separator)
-            truncated_description = task.description
-            if len(truncated_description) > 75:
-                truncated_description = f"{truncated_description[:72]}..."
-            logger.info(f"Starting task {task.id}: {truncated_description}")
+            task_log.info(
+                "task.start",
+                description=task.description,
+                timeout_s=self.config.agent.task_timeout_seconds,
+            )
 
             # Execute with Claude Code SDK (async)
             start_time = time.time()
@@ -317,16 +358,30 @@ class SleepleassAgent:
                 )
             except asyncio.TimeoutError as exc:
                 timeout_minutes = max(1, self.config.agent.task_timeout_seconds // 60)
+                task_log.error(
+                    "task.timeout",
+                    timeout_minutes=timeout_minutes,
+                )
                 raise TimeoutError(
                     f"Timed out after {timeout_minutes} minute(s)"
                 ) from exc
             processing_time = int(time.time() - start_time)
+            task_log.info(
+                "task.executor.done",
+                exit_code=exit_code,
+                duration_s=processing_time,
+                total_cost_usd=usage_metrics.get("total_cost_usd"),
+                turns=usage_metrics.get("num_turns"),
+            )
 
             files_modified = sorted(files_modified) if files_modified else []
 
             # Check if execution was successful
             if exit_code != 0:
-                logger.warning(f"Task {task.id} completed with non-zero exit code: {exit_code}")
+                task_log.warning(
+                    "task.exit_code",
+                    exit_code=exit_code,
+                )
                 # Note: We don't fail the task on non-zero exit, as Claude Code may still produce useful output
 
             # Handle git operations based on priority
@@ -348,6 +403,13 @@ class SleepleassAgent:
                 git_pr_url=git_pr_url,
                 git_branch=git_branch,
                 workspace_path=str(task_workspace),
+            )
+
+            task_log.info(
+                "task.result.saved",
+                result_id=result.id,
+                files=len(files_modified),
+                commands=len(commands_executed),
             )
 
             if task_workspace and task_workspace.exists():
@@ -374,6 +436,12 @@ class SleepleassAgent:
                             files=commit_targets,
                             message=commit_message,
                         )
+                        task_log.info(
+                            "task.git.commit",
+                            branch=git_branch,
+                            commit=git_commit_sha,
+                            files=len(commit_targets),
+                        )
                 elif task.priority == TaskPriority.SERIOUS:
                     if files_for_commit:
                         is_valid, validation_msg = self.git.validate_changes(
@@ -390,7 +458,7 @@ class SleepleassAgent:
                                     message=commit_message,
                                 )
                         else:
-                            logger.warning(f"Validation failed for task {task.id}: {validation_msg}")
+                            task_log.warning("task.git.validation_failed", reason=validation_msg)
                 else:
                     commit_targets = self._collect_commit_targets(task_workspace, files_for_commit)
                     if commit_targets:
@@ -401,6 +469,12 @@ class SleepleassAgent:
                             files=commit_targets,
                             message=commit_message,
                         )
+                        task_log.info(
+                            "task.git.commit",
+                            branch=git_branch,
+                            commit=git_commit_sha,
+                            files=len(commit_targets),
+                        )
 
                 if git_commit_sha:
                     self.results.update_result_commit_info(
@@ -410,9 +484,9 @@ class SleepleassAgent:
                         git_branch=git_branch,
                     )
                 else:
-                    logger.debug(f"No git commit produced for task {task.id}")
+                    task_log.debug("task.git.no_commit")
             else:
-                logger.warning(f"No workspace found for task {task.id}; skipping git operations")
+                task_log.warning("task.git.skipped", reason="workspace_missing")
 
             # Mark as completed
             self.task_queue.mark_completed(task.id, result_id=result.id)
@@ -439,7 +513,7 @@ class SleepleassAgent:
                 )
                 self.report_generator.append_task_completion(task_metrics, project_id=task.project_id)
             except Exception as e:
-                logger.error(f"Failed to append task to report: {e}")
+                task_log.error("task.report.append_failed", error=str(e))
 
             # Record API usage metrics
             self.scheduler.record_task_usage(
@@ -509,16 +583,22 @@ class SleepleassAgent:
             from sleepless_agent.exceptions import PauseException
 
             if isinstance(e, PauseException):
+                if e.reset_time:
+                    pause_note = f"execution paused until {e.reset_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                else:
+                    pause_note = "execution paused until usage drops"
                 task_summary = (
-                    f"Task {task.id} complete: execution paused until "
-                    f"{e.reset_time.strftime('%Y-%m-%d %H:%M:%S')} due to usage limits."
+                    f"Task {task.id} complete: {pause_note} due to usage limits."
                 )
-                logger.warning(
-                    f"Pro plan usage limit reached during task {task.id}: "
-                    f"{e.current_usage}/{e.usage_limit} ({e.percent_used:.1f}%)"
+                task_log.warning(
+                    "task.pause.limit",
+                    usage_percent=e.usage_percent,
                 )
-                logger.info(f"Task {task.id} completed - pausing execution")
-                logger.info(f"Usage will reset at {e.reset_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                task_log.info("task.pause.begin")
+                if e.reset_time:
+                    task_log.info("task.pause.reset_time", reset_at=e.reset_time.isoformat())
+                else:
+                    task_log.info("task.pause.reset_time_missing")
 
                 # Mark task as completed (it finished successfully, just pausing now)
                 try:
@@ -536,15 +616,16 @@ class SleepleassAgent:
                     )
                     self.task_queue.mark_completed(task.id, result_id=result.id)
                 except Exception as save_error:
-                    logger.warning(f"Failed to save result before pause: {save_error}")
+                    task_log.warning("task.pause.save_failed", error=str(save_error))
 
                 # Calculate sleep time
                 now = datetime.utcnow()
                 sleep_seconds = max(0, (e.reset_time - now).total_seconds())
 
-                logger.critical(
-                    f"⏸️  Pausing execution for {sleep_seconds / 60:.1f} minutes "
-                    f"(until {e.reset_time.strftime('%H:%M:%S')})"
+                task_log.critical(
+                    "task.pause.sleep",
+                    sleep_minutes=round(sleep_seconds / 60, 2),
+                    resume_at=e.reset_time.isoformat(),
                 )
 
                 # Send Slack notification

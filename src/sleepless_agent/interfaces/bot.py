@@ -4,7 +4,9 @@ import json
 from datetime import datetime
 from typing import Optional
 
-from loguru import logger
+from sleepless_agent.logging import get_logger
+logger = get_logger(__name__)
+
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from slack_sdk.socket_mode import SocketModeClient

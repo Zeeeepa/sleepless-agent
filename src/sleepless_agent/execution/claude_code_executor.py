@@ -21,7 +21,8 @@ from claude_agent_sdk import (
     ResultMessage,
     TextBlock,
 )
-from loguru import logger
+from sleepless_agent.logging import get_logger
+logger = get_logger(__name__)
 
 from sleepless_agent.core.live_status import LiveStatusEntry, LiveStatusTracker
 
@@ -1019,23 +1020,24 @@ Output should include:
                 if config.multi_agent_workflow.pro_plan_monitoring.enabled:
                     logger.info("Checking Pro plan usage...")
                     checker = ProPlanUsageChecker(
-                        command=config.multi_agent_workflow.pro_plan_monitoring.usage_command
+                        command=config.multi_agent_workflow.pro_plan_monitoring.usage_command,
                     )
                     should_pause, reset_time = checker.check_should_pause(
                         threshold_percent=config.multi_agent_workflow.pro_plan_monitoring.pause_threshold
                     )
 
-                    if should_pause and reset_time:
-                        messages_used, messages_limit, _ = checker.get_usage()
+                    if should_pause:
+                        usage_percent, _ = checker.get_usage()
                         logger.critical(
-                            f"Pro plan usage limit reached: {messages_used}/{messages_limit} "
-                            f"({messages_used/messages_limit*100:.1f}%) >= {config.multi_agent_workflow.pro_plan_monitoring.pause_threshold}%"
+                            "Pro plan usage limit reached: {:.1f}% >= {:.1f}% threshold".format(
+                                usage_percent,
+                                config.multi_agent_workflow.pro_plan_monitoring.pause_threshold,
+                            )
                         )
                         raise PauseException(
-                            message=f"Pro plan usage limit reached at {messages_used}/{messages_limit} messages",
+                            message=f"Pro plan usage limit reached at {usage_percent:.1f}%",
                             reset_time=reset_time,
-                            current_usage=messages_used,
-                            usage_limit=messages_limit,
+                            usage_percent=usage_percent,
                         )
                     else:
                         logger.info("Pro plan usage OK - ready for next task")
@@ -1087,7 +1089,12 @@ Output should include:
 
         workspace.mkdir(parents=True, exist_ok=True)
 
-        logger.info(f"Using {workspace_type}: {workspace}")
+        logger.info(
+            "workspace.ready",
+            task_id=task_id,
+            workspace=str(workspace),
+            workspace_type=workspace_type,
+        )
         return workspace
 
     async def execute_task(
@@ -1141,7 +1148,19 @@ Output should include:
             )
 
             # Multi-agent workflow orchestration
-            logger.info(f"Executing multi-agent workflow for task {task_id}...")
+            task_log = logger.bind(
+                component="executor",
+                task_id=task_id,
+                priority=priority,
+                project_id=project_id,
+                project_name=project_name,
+            )
+            workspace_str = str(workspace)
+            task_log.info(
+                "task.workflow.start",
+                workspace=workspace_str,
+                task_type=task_type,
+            )
             start_time = time.time()
 
             # Get configuration
@@ -1181,7 +1200,11 @@ Output should include:
 
             # Phase 1: Planner
             if multi_agent_config.planner.enabled:
-                logger.info(f"Phase 1: Planner Agent (max_turns={multi_agent_config.planner.max_turns})")
+                phase_log = task_log.bind(phase="planner")
+                phase_log.info(
+                    "task.phase.start",
+                    max_turns=multi_agent_config.planner.max_turns,
+                )
                 try:
                     plan_text, planner_metrics = await self._execute_planner_phase(
                         task_id=task_id,
@@ -1200,13 +1223,22 @@ Output should include:
                         combined_metrics["total_cost_usd"] += planner_metrics["planner_cost_usd"]
                     if planner_metrics.get("planner_duration_ms"):
                         combined_metrics["duration_api_ms"] += planner_metrics["planner_duration_ms"]
+                    if planner_metrics.get("planner_turns"):
+                        combined_metrics["num_turns"] += planner_metrics["planner_turns"]
+
+                    phase_log.info(
+                        "task.phase.done",
+                        turns=planner_metrics.get("planner_turns"),
+                        cost_usd=planner_metrics.get("planner_cost_usd"),
+                        duration_ms=planner_metrics.get("planner_duration_ms"),
+                    )
 
                     # Create PLAN.md
                     if multi_agent_config.plan.auto_create:
                         self._create_plan_file(workspace, plan_text)
 
                 except Exception as e:
-                    logger.error(f"Planner phase failed: {e}")
+                    phase_log.error("task.phase.failed", error=str(e))
                     plan_text = f"[Planner phase failed: {str(e)}]"
                     final_exit_code = 1
             else:
@@ -1214,7 +1246,11 @@ Output should include:
 
             # Phase 2: Worker
             if multi_agent_config.worker.enabled and final_exit_code == 0:
-                logger.info(f"Phase 2: Worker Agent (max_turns={multi_agent_config.worker.max_turns})")
+                phase_log = task_log.bind(phase="worker")
+                phase_log.info(
+                    "task.phase.start",
+                    max_turns=multi_agent_config.worker.max_turns,
+                )
                 try:
                     worker_output, files_modified, commands_executed, exit_code, worker_metrics = await self._execute_worker_phase(
                         task_id=task_id,
@@ -1239,8 +1275,18 @@ Output should include:
                     if worker_metrics.get("worker_turns"):
                         combined_metrics["num_turns"] += worker_metrics["worker_turns"]
 
+                    phase_log.info(
+                        "task.phase.done",
+                        turns=worker_metrics.get("worker_turns"),
+                        cost_usd=worker_metrics.get("worker_cost_usd"),
+                        duration_ms=worker_metrics.get("worker_duration_ms"),
+                        exit_code=exit_code,
+                        files=len(all_files_modified),
+                        commands=len(all_commands_executed),
+                    )
+
                 except Exception as e:
-                    logger.error(f"Worker phase failed: {e}")
+                    phase_log.error("task.phase.failed", error=str(e))
                     all_output_parts.append(f"## Worker Output\n[Worker phase failed: {str(e)}]")
                     final_exit_code = 1
             else:
@@ -1252,7 +1298,11 @@ Output should include:
             eval_recommendations = []
 
             if multi_agent_config.evaluator.enabled:
-                logger.info(f"Phase 3: Evaluator Agent (max_turns={multi_agent_config.evaluator.max_turns})")
+                phase_log = task_log.bind(phase="evaluator")
+                phase_log.info(
+                    "task.phase.start",
+                    max_turns=multi_agent_config.evaluator.max_turns,
+                )
                 try:
                     evaluation_summary, eval_status, eval_outstanding, eval_recommendations, evaluator_metrics = await self._execute_evaluator_phase(
                         task_id=task_id,
@@ -1286,26 +1336,31 @@ Output should include:
                     if evaluator_metrics.get("evaluator_turns"):
                         combined_metrics["num_turns"] += evaluator_metrics["evaluator_turns"]
 
+                    phase_log.info(
+                        "task.phase.done",
+                        turns=evaluator_metrics.get("evaluator_turns"),
+                        cost_usd=evaluator_metrics.get("evaluator_cost_usd"),
+                        duration_ms=evaluator_metrics.get("evaluator_duration_ms"),
+                        status=eval_status,
+                    )
+
                     # Check if we should auto-generate refinement task
                     try:
-                        # Get current usage percentage
                         current_usage_percent = None
                         try:
                             from sleepless_agent.monitoring.pro_plan_usage import ProPlanUsageChecker
                             checker = ProPlanUsageChecker(
-                                command=multi_agent_config.pro_plan_monitoring.usage_command
+                                command=multi_agent_config.pro_plan_monitoring.usage_command,
                             )
-                            messages_used, messages_limit, _ = checker.get_usage()
-                            current_usage_percent = (messages_used / messages_limit * 100) if messages_limit > 0 else 0
+                            current_usage_percent, _ = checker.get_usage()
                         except Exception as usage_error:
-                            logger.debug(f"Could not get usage for auto-generation: {usage_error}")
+                            phase_log.debug("usage.fetch_failed", error=str(usage_error))
 
                         if current_usage_percent is not None and self._should_auto_generate_refinement(
                             status=eval_status,
                             current_usage_percent=current_usage_percent,
                             config=config,
                         ):
-                            # Generate refinement task
                             refinement_task_id = self._generate_refinement_task(
                                 project_id=project_id,
                                 project_name=project_name,
@@ -1313,14 +1368,21 @@ Output should include:
                                 outstanding_items=eval_outstanding,
                             )
                             if refinement_task_id:
-                                logger.info(f"Auto-generated refinement task #{refinement_task_id}")
+                                task_log.info(
+                                    "task.refine.created",
+                                    refinement_task_id=refinement_task_id,
+                                    status=eval_status,
+                                    usage_percent=current_usage_percent,
+                                )
 
                     except Exception as auto_gen_error:
-                        logger.warning(f"Error in auto-generation logic: {auto_gen_error}")
+                        phase_log.warning("task.refine.error", error=str(auto_gen_error))
 
                 except Exception as e:
-                    logger.error(f"Evaluator phase failed: {e}")
+                    phase_log.error("task.phase.failed", error=str(e))
                     all_output_parts.append(f"## Evaluator Output\n[Evaluator phase failed: {str(e)}]")
+                    eval_status = "failed"
+                    final_exit_code = 1
             else:
                 all_output_parts.append("## Evaluator Output\n[Evaluator phase disabled]")
 
@@ -1357,9 +1419,17 @@ Output should include:
                 status="completed" if final_exit_code == 0 else "error",
             )
 
-            logger.info(
-                f"Task {task_id} completed in {execution_time}s "
-                f"(exit code: {final_exit_code}, files: {len(all_modified_files)}, cost: ${combined_metrics['total_cost_usd']:.4f})"
+            summary_status = eval_status or ("failed" if final_exit_code else "success")
+            task_log.info(
+                "task.workflow.complete",
+                exit_code=final_exit_code,
+                status=summary_status,
+                total_cost_usd=combined_metrics.get("total_cost_usd"),
+                duration_ms=combined_metrics.get("duration_ms"),
+                duration_api_ms=combined_metrics.get("duration_api_ms"),
+                turns=combined_metrics.get("num_turns"),
+                files=len(all_modified_files),
+                commands=len(all_commands_executed),
             )
 
             return output_text, all_modified_files, all_commands_executed, final_exit_code, combined_metrics

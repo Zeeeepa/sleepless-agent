@@ -5,7 +5,9 @@ import random
 from datetime import datetime, time
 from typing import Optional, Tuple, Dict
 
-from loguru import logger
+from sleepless_agent.logging import get_logger
+logger = get_logger(__name__)
+
 from sqlalchemy.orm import Session
 
 from pathlib import Path

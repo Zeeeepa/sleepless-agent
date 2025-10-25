@@ -126,11 +126,12 @@ sleepless daemon
 tail -f workspace/data/agent.log
 ```
 
-You should see:
+You should see startup logs similar to:
 ```
-INFO - Slack bot started and listening for events
-INFO - Sleepless Agent starting...
+2025-10-24 23:30:12 | INFO     | sleepless_agent.interfaces.bot.start:50 Slack bot started and listening for events
+2025-10-24 23:30:12 | INFO     | sleepless_agent.core.daemon.run:178 Sleepless Agent starting...
 ```
+Logs are rendered with Rich for readability; set `SLEEPLESS_LOG_LEVEL=DEBUG` to increase verbosity.
 
 ## Slack Commands
 
@@ -297,8 +298,7 @@ AGENT_DB_PATH=./workspace/data/tasks.db
 AGENT_RESULTS_PATH=./workspace/data/results
 GIT_USER_NAME=Sleepless Agent
 GIT_USER_EMAIL=agent@sleepless.local
-LOG_LEVEL=INFO
-DEBUG=false
+SLEEPLESS_LOG_LEVEL=INFO
 ```
 
 ## Task Types
@@ -340,7 +340,7 @@ Tasks are stored with:
 pytest
 
 # Run with debug logging
-DEBUG=true python -m sleepless_agent.daemon
+SLEEPLESS_LOG_LEVEL=DEBUG python -m sleepless_agent.daemon
 ```
 
 ## Monitoring

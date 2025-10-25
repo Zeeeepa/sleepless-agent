@@ -9,7 +9,8 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Iterable, List, Optional
 
-from loguru import logger
+from sleepless_agent.logging import get_logger
+logger = get_logger(__name__)
 
 
 def _utc_now_iso() -> str:
