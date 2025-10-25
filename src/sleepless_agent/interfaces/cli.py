@@ -15,6 +15,8 @@ from typing import Optional
 from sleepless_agent.monitoring.logging import get_logger
 logger = get_logger(__name__)
 
+from sleepless_agent.tasks.utils import slugify_project
+
 from rich import box
 from rich.align import Align
 from rich.console import Console
@@ -139,11 +141,12 @@ def command_check(ctx: CLIContext) -> int:
     pro_plan_usage_info = ""
     try:
         from sleepless_agent.monitoring.pro_plan_usage import ProPlanUsageChecker
+        from sleepless_agent.scheduling.time_utils import is_nighttime
         checker = ProPlanUsageChecker(
-            command=config.multi_agent_workflow.pro_plan_monitoring.usage_command,
+            command=config.claude_code.usage_command,
         )
         usage_percent, _ = checker.get_usage()
-        threshold = config.multi_agent_workflow.pro_plan_monitoring.pause_threshold
+        threshold = config.claude_code.pause_threshold_night if is_nighttime() else config.claude_code.pause_threshold_day
         pro_plan_usage_info = f" • Pro Usage: {usage_percent:.0f}% / {threshold:.0f}% limit"
     except Exception as exc:
         logger.debug(f"Could not fetch Pro plan usage for dashboard: {exc}")
@@ -569,7 +572,7 @@ def command_cancel(ctx: CLIContext, identifier: str | int) -> int:
         return 0
     except ValueError:
         # It's a project identifier, handle project soft deletion
-        project_id = _slugify_project(identifier_str)
+        project_id = slugify_project(identifier_str)
         project = ctx.task_queue.get_project_by_id(project_id)
 
         if not project:
@@ -678,11 +681,6 @@ def _summarize_metrics(entries: list[dict]) -> dict:
     }
 
 
-
-
-def _slugify_project(identifier: str) -> str:
-    """Convert project name/id to slugified project_id (auto-detect)."""
-    return re.sub(r'[^a-z0-9-]', '-', identifier.lower())
 
 
 def command_trash(ctx: CLIContext, subcommand: Optional[str] = None, identifier: Optional[str] = None) -> int:

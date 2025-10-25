@@ -278,21 +278,19 @@ The agent automatically monitors your Claude Code Pro plan usage and prevents ta
 ```
 
 **Visibility:**
-- Dashboard: Shows `Pro Usage: X% / 85% limit` in `sle check`
-- Logs: Each usage check logs `Pro plan usage: X/40 (Y% / 85% pause threshold)`
-- Config: Adjustable via `multi_agent_workflow.pro_plan_monitoring.pause_threshold` in `config.yaml` (default: 85.0)
+- Dashboard: Shows `Pro Usage: X% / Y% limit` in `sle check` (Y = 20% daytime, 80% nighttime)
+- Logs: Each usage check logs Pro plan usage with time-based threshold
+- Config: Adjustable via `claude_code.pause_threshold_day` and `claude_code.pause_threshold_night` in `config.yaml`
 
-**What happens at 85%:**
-- ⏸️ New task generation pauses
+**Time-Based Thresholds:**
+- **Daytime (8 AM - 8 PM):** Pause at 20% (saves quota for your manual usage)
+- **Nighttime (8 PM - 8 AM):** Pause at 80% (agent works aggressively while you sleep)
+- ⏸️ New task generation pauses at threshold
 - ✅ Running tasks complete normally
 - 📋 Pending tasks wait in queue
-- 📝 Log warns: "Usage threshold exceeded: 34/40 (85% >= 85%)"
 - ⏱️ Grace period: +1 minute after reset to avoid edge cases
 
-To disable Pro plan monitoring (not recommended):
-```python
-# In config.yaml: multi_agent_workflow.pro_plan_monitoring.enabled = false
-```
+**Note:** Pro plan usage monitoring is mandatory and always enabled.
 
 ## Environment Variables
 
@@ -419,7 +417,7 @@ launchctl list | grep sleepless
 |-------|----------|
 | Bot not responding | Check `.env` tokens, verify Socket Mode enabled, check logs: `tail -f workspace/data/agent.log` |
 | Tasks not executing | Verify Claude Code CLI installed: `npm list -g @anthropic-ai/claude-code`, check workspace permissions |
-| Tasks paused (85% threshold) | Usage has reached 85% of Pro plan limit. Wait for window reset (check logs for reset time), or adjust threshold in `config.yaml` (`multi_agent_workflow.pro_plan_monitoring.pause_threshold`). Run `sle check` to see current usage. |
+| Tasks paused (threshold reached) | Usage has reached time-based threshold (20% daytime / 80% nighttime). Wait for window reset (check logs for reset time), or adjust thresholds in `config.yaml` (`claude_code.pause_threshold_day` / `claude_code.pause_threshold_night`). Run `sle check` to see current usage. |
 | Git commits fail | Install `gh` CLI and authenticate: `gh auth login` |
 | Out of credits | Wait for 5-hour window refresh. Review scheduler logs: `tail -f workspace/data/agent.log | grep credit` |
 | Database locked | Close other connections, try: `rm workspace/data/tasks.db && python -m sleepless_agent.daemon` |

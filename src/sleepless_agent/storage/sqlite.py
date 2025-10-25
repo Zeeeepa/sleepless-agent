@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from typing import Callable, Generator, Optional, TypeVar
+from typing import Callable, Optional, TypeVar
 
 from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
@@ -36,18 +35,6 @@ class SQLiteStore:
     def _should_reset_on_error(exc: OperationalError) -> bool:
         message = str(exc).lower()
         return "readonly" in message or ("sqlite" in message and "locked" in message)
-
-    @contextmanager
-    def session_scope(self) -> Generator[Session, None, None]:
-        session = self.SessionLocal()
-        try:
-            yield session
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
 
     def _run_write(
         self,

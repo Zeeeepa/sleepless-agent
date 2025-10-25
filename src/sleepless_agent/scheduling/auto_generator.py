@@ -26,7 +26,6 @@ from sleepless_agent.core.models import Task, TaskPriority, TaskStatus, TaskType
 from typing import TypeAlias
 
 from sleepless_agent.scheduling.scheduler import BudgetManager
-from sleepless_agent.scheduling.time_utils import rate_limit_for_time
 from sleepless_agent.utils.config import ConfigNode
 
 AutoGenerationConfig: TypeAlias = ConfigNode
@@ -41,16 +40,22 @@ class AutoTaskGenerator:
         db_session: Session,
         config: AutoGenerationConfig,
         budget_manager: BudgetManager,
+        default_model: str,
+        usage_command: str,
+        pause_threshold_day: float,
+        pause_threshold_night: float,
     ):
         """Initialize auto-generator with database session and config"""
         self.session = db_session
         self.config = config
         self.budget_manager = budget_manager
+        self.default_model = default_model
+        self.usage_command = usage_command
+        self.pause_threshold_day = pause_threshold_day
+        self.pause_threshold_night = pause_threshold_night
 
-        # Track generation rate limiting
+        # Track generation metadata
         self.last_generation_time: Optional[datetime] = None
-        self.generation_count_this_hour = 0
-        self.current_hour_start: Optional[datetime] = None
         self._last_generation_source: Optional[str] = None
 
     async def check_and_generate(self) -> bool:
@@ -62,10 +67,6 @@ class AutoTaskGenerator:
         if not self._should_generate():
             return False
 
-        # Check rate limiting
-        if not self._check_rate_limit():
-            return False
-
         # Try to generate a task
         task = await self._generate_task()
         if task:
@@ -75,40 +76,21 @@ class AutoTaskGenerator:
         return False
 
     def _should_generate(self) -> bool:
-        """Check if usage is within the threshold/ceiling range"""
-        usage_percent = self.budget_manager.get_usage_percent()
+        """Check if usage is below pause threshold (use time-based thresholds)"""
+        from sleepless_agent.monitoring.pro_plan_usage import ProPlanUsageChecker
+        from sleepless_agent.scheduling.time_utils import is_nighttime
 
-        # Don't generate if above ceiling
-        if usage_percent >= self.config.budget_ceiling_percent:
+        try:
+            checker = ProPlanUsageChecker(command=self.usage_command)
+            threshold = self.pause_threshold_night if is_nighttime() else self.pause_threshold_day
+            should_pause, _ = checker.check_should_pause(threshold_percent=threshold)
+
+            # Generate only when NOT paused (i.e., usage < threshold)
+            return not should_pause
+        except Exception as e:
+            logger.error("autogen.usage_check.failed", error=str(e))
+            # Don't generate on error - fail safe
             return False
-
-        # Only generate if below threshold
-        if usage_percent < self.config.usage_threshold_percent:
-            return True
-
-        return False
-
-    def _check_rate_limit(self) -> bool:
-        """Check if we've exceeded rate limit for current time period"""
-        now = datetime.utcnow()
-        current_hour = now.replace(minute=0, second=0, microsecond=0)
-
-        # Reset counter if we've moved to a new hour
-        if self.current_hour_start != current_hour:
-            self.current_hour_start = current_hour
-            self.generation_count_this_hour = 0
-
-        rate_limit = rate_limit_for_time(
-            day_limit=self.config.rate_limit_day,
-            night_limit=self.config.rate_limit_night,
-            dt=now,
-        )
-
-        if self.generation_count_this_hour >= rate_limit:
-            return False
-
-        self.generation_count_this_hour += 1
-        return True
 
     async def _generate_task(self) -> Optional[Task]:
         """Generate a task using the configured prompt archetypes."""
@@ -128,8 +110,8 @@ class AutoTaskGenerator:
         # Parse task type from description (for AI-generated tasks with [NEW]/[REFINE] prefix)
         clean_desc, task_type = self._parse_task_type(task_desc)
 
-        # Determine priority: mostly low-priority generated work unless escalated
-        priority = TaskPriority.GENERATED if random.random() < self.config.random_ratio else TaskPriority.SERIOUS
+        # All auto-generated tasks are low-priority
+        priority = TaskPriority.GENERATED
 
         # Create task in database
         task = Task(
@@ -219,12 +201,7 @@ class AutoTaskGenerator:
             logger.debug("autogen.prompt.empty", prompt=prompt_config.name)
             return None
 
-        model_to_use = prompt_config.model or self.config.ai_model
-        if not model_to_use:
-            logger.error("autogen.prompt.no_model", prompt=prompt_config.name)
-            return None
-
-        options = self._build_options(model_to_use)
+        options = self._build_options(self.default_model)
         text_segments: list[str] = []
 
         try:
@@ -237,19 +214,10 @@ class AutoTaskGenerator:
                     if message.result:
                         text_segments.append(message.result)
         except (CLINotFoundError, ProcessError, CLIConnectionError, CLIJSONDecodeError) as exc:
-            self._log_sdk_failure(
-                exc,
-                severity=prompt_config.log_severity,
-                prompt_name=prompt_config.name,
-            )
+            self._log_sdk_failure(exc, prompt_name=prompt_config.name)
             return None
         except Exception as exc:  # pragma: no cover - unexpected failure
-            self._log_sdk_failure(
-                exc,
-                severity=prompt_config.log_severity,
-                prompt_name=prompt_config.name,
-                unexpected=True,
-            )
+            self._log_sdk_failure(exc, prompt_name=prompt_config.name, unexpected=True)
             return None
 
         full_text = "".join(text_segments).strip()
@@ -264,14 +232,12 @@ class AutoTaskGenerator:
     def _log_sdk_failure(
         exc: Exception,
         *,
-        severity: str,
         prompt_name: str,
         unexpected: bool = False,
     ) -> None:
         """Emit a structured log entry for Claude SDK failures."""
-        log_method = getattr(logger, severity, logger.error)
         event = "claude_sdk.unexpected_error" if unexpected else "claude_sdk.error"
-        log_method(
+        logger.error(
             event,
             prompt=prompt_name,
             error=str(exc),

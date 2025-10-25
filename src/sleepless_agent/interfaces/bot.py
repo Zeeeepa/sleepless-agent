@@ -16,7 +16,7 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 from sleepless_agent.utils.display import format_age_seconds, format_duration, relative_time, shorten
 from sleepless_agent.core.models import TaskPriority, TaskStatus
 from sleepless_agent.core.queue import TaskQueue
-from sleepless_agent.tasks.utils import prepare_task_creation
+from sleepless_agent.tasks.utils import prepare_task_creation, slugify_project
 from sleepless_agent.utils.live_status import LiveStatusTracker
 from sleepless_agent.monitoring.report_generator import ReportGenerator
 
@@ -257,7 +257,7 @@ class SlackBot:
                 pass
 
             # Try to interpret as project ID
-            project_id = _slugify_project(identifier_str)
+            project_id = slugify_project(identifier_str)
             project = self.task_queue.get_project_by_id(project_id)
 
             if not project:
@@ -579,11 +579,8 @@ class SlackBot:
             ]
         }
 
-    def _build_check_blocks(self) -> list[dict]:
-        """Build Block Kit blocks for status check response"""
-        escape = self._escape_slack
-        blocks = []
-
+    def _gather_status_data(self) -> dict:
+        """Gather all status data for check command"""
         health = self.monitor.check_health() if self.monitor else {}
         status = str(health.get("status", "unknown"))
         status_emoji = {
@@ -601,16 +598,88 @@ class SlackBot:
                 return "N/A"
             return str(value)
 
-        uptime = escape(health.get("uptime_human", "< 1m"))
+        uptime = health.get("uptime_human", "< 1m")
         cpu_text = fmt_percent(system.get("cpu_percent"))
         mem_text = fmt_percent(system.get("memory_percent"))
 
+        # Queue status
+        queue_status = self.task_queue.get_queue_status()
+
+        # Lifetime stats
+        stats = None
+        success_rate = None
+        success_text = "—"
+        if self.monitor:
+            stats = self.monitor.get_stats()
+            success_rate = stats.get("success_rate")
+            success_text = f"{success_rate:.1f}%" if success_rate is not None else "—"
+
+        # Live status entries
+        live_entries = []
+        if self.live_status_tracker:
+            try:
+                live_entries = self.live_status_tracker.entries()
+            except Exception as exc:
+                logger.debug(f"Live status unavailable: {exc}")
+                live_entries = []
+
+        # Tasks
+        running_tasks = self.task_queue.get_in_progress_tasks()
+        pending_tasks = self.task_queue.get_pending_tasks(limit=3)
+        recent_tasks = self.task_queue.get_recent_tasks(limit=5)
+
+        # Projects
+        projects = self.task_queue.get_projects()
+        projects_sorted = sorted(projects, key=lambda p: p["total_tasks"], reverse=True) if projects else []
+
+        # Storage
+        db = health.get("database", {})
+        storage = health.get("storage", {})
+
+        # Budget info
+        budget_info = None
+        if self.scheduler:
+            try:
+                budget_info = self.scheduler.get_credit_status()
+            except Exception as exc:
+                logger.debug(f"Failed to fetch credit status: {exc}")
+
+        return {
+            "status": status,
+            "status_emoji": status_emoji,
+            "uptime": uptime,
+            "cpu_text": cpu_text,
+            "mem_text": mem_text,
+            "queue_status": queue_status,
+            "stats": stats,
+            "success_rate": success_rate,
+            "success_text": success_text,
+            "live_entries": live_entries,
+            "running_tasks": running_tasks,
+            "pending_tasks": pending_tasks,
+            "recent_tasks": recent_tasks,
+            "projects": projects,
+            "projects_sorted": projects_sorted,
+            "db": db,
+            "storage": storage,
+            "budget_info": budget_info,
+        }
+
+    def _build_check_blocks(self) -> list[dict]:
+        """Build Block Kit blocks for status check response"""
+        escape = self._escape_slack
+        blocks = []
+
+        # Gather all status data
+        data = self._gather_status_data()
+
         # Header with status
-        blocks.append(self._block_header(f"{status_emoji} Sleepless Agent Status"))
+        blocks.append(self._block_header(f"{data['status_emoji']} Sleepless Agent Status"))
 
         # System info
+        uptime = escape(data['uptime'])
         blocks.append(self._block_section(
-            f"Uptime: `{uptime}` · CPU: `{cpu_text}%` · Memory: `{mem_text}%`",
+            f"Uptime: `{uptime}` · CPU: `{data['cpu_text']}%` · Memory: `{data['mem_text']}%`",
             markdown=True
         ))
 
@@ -618,7 +687,7 @@ class SlackBot:
 
         # Queue section
         blocks.append(self._block_header("Queue"))
-        queue_status = self.task_queue.get_queue_status()
+        queue_status = data['queue_status']
         queue_fields = [
             {"label": "Pending", "value": str(queue_status['pending'])},
             {"label": "In Progress", "value": str(queue_status['in_progress'])},
@@ -628,11 +697,9 @@ class SlackBot:
         blocks.append(self._block_section_fields(queue_fields))
 
         # Lifetime stats if available
-        if self.monitor:
-            stats = self.monitor.get_stats()
-            success_rate = stats.get("success_rate")
-            success_text = f"{success_rate:.1f}%" if success_rate is not None else "—"
-            lifetime_info = f"*Lifetime:* Completed `{stats['tasks_completed']}`, Failed `{stats['tasks_failed']}`, Success `{success_text}`"
+        if data['stats']:
+            stats = data['stats']
+            lifetime_info = f"*Lifetime:* Completed `{stats['tasks_completed']}`, Failed `{stats['tasks_failed']}`, Success `{data['success_text']}`"
             if stats.get("avg_processing_time") is not None:
                 lifetime_info += f" · Avg Duration `{format_duration(stats.get('avg_processing_time'))}`"
             blocks.append(self._block_section(lifetime_info, markdown=True))
@@ -641,7 +708,7 @@ class SlackBot:
 
         # Active tasks section
         blocks.append(self._block_header("Active Tasks"))
-        running_tasks = self.task_queue.get_in_progress_tasks()
+        running_tasks = data['running_tasks']
         if running_tasks:
             for task in running_tasks[:3]:
                 project = task.project_name or task.project_id or "—"
@@ -663,7 +730,7 @@ class SlackBot:
 
         # Pending tasks section
         blocks.append(self._block_header("Next Up"))
-        pending_tasks = self.task_queue.get_pending_tasks(limit=3)
+        pending_tasks = data['pending_tasks']
         if pending_tasks:
             for task in pending_tasks:
                 project = task.project_name or task.project_id
@@ -680,11 +747,11 @@ class SlackBot:
             blocks.append(self._block_section("Queue is clear", markdown=True))
 
         # Projects section
-        projects = self.task_queue.get_projects()
+        projects = data['projects']
         if projects:
             blocks.append(self._block_divider())
             blocks.append(self._block_header("Projects"))
-            projects_sorted = sorted(projects, key=lambda p: p["total_tasks"], reverse=True)
+            projects_sorted = data['projects_sorted']
             display_limit = 4
             for proj in projects_sorted[:display_limit]:
                 name = escape(proj["project_name"] or proj["project_id"] or "—")
@@ -697,8 +764,8 @@ class SlackBot:
 
         # Storage section
         blocks.append(self._block_header("Storage"))
-        db = health.get("database", {})
-        storage = health.get("storage", {})
+        db = data['db']
+        storage = data['storage']
         storage_fields = []
         if db:
             if db.get("accessible"):
@@ -720,12 +787,7 @@ class SlackBot:
             blocks.append(self._block_section_fields(storage_fields))
 
         # Usage section
-        budget_info = None
-        if self.scheduler:
-            try:
-                budget_info = self.scheduler.get_credit_status()
-            except Exception as exc:
-                logger.debug(f"Failed to fetch credit status: {exc}")
+        budget_info = data['budget_info']
 
         if budget_info:
             blocks.append(self._block_divider())
@@ -768,7 +830,7 @@ class SlackBot:
 
         # Recent activity section
         blocks.append(self._block_header("Recent Activity"))
-        recent_tasks = self.task_queue.get_recent_tasks(limit=5)
+        recent_tasks = data['recent_tasks']
         if recent_tasks:
             status_icons = {
                 TaskStatus.COMPLETED: "✅",
@@ -791,35 +853,18 @@ class SlackBot:
     def _build_check_message(self) -> str:
         escape = self._escape_slack
 
-        health = self.monitor.check_health() if self.monitor else {}
-        status = str(health.get("status", "unknown"))
-        status_emoji = {
-            "healthy": "✅",
-            "degraded": "⚠️",
-            "unhealthy": "❌",
-        }.get(status.lower(), "❔")
-
-        system = health.get("system", {})
-
-        def fmt_percent(value):
-            if isinstance(value, (int, float)):
-                return f"{float(value):.1f}"
-            if value in (None, ""):
-                return "N/A"
-            return str(value)
-
-        uptime = escape(health.get("uptime_human", "< 1m"))
-        cpu_text = fmt_percent(system.get("cpu_percent"))
-        mem_text = fmt_percent(system.get("memory_percent"))
+        # Gather all status data
+        data = self._gather_status_data()
 
         lines: list[str] = []
         lines.append("*Sleepless Agent Status*")
+        uptime = escape(data['uptime'])
         lines.append(
-            f"{status_emoji} *{escape(status.upper())}* · "
-            f"Uptime `{uptime}` · CPU `{cpu_text}%` · Memory `{mem_text}%`"
+            f"{data['status_emoji']} *{escape(data['status'].upper())}* · "
+            f"Uptime `{uptime}` · CPU `{data['cpu_text']}%` · Memory `{data['mem_text']}%`"
         )
 
-        queue_status = self.task_queue.get_queue_status()
+        queue_status = data['queue_status']
         lines.append("")
         lines.append("*Queue*")
         lines.append(
@@ -829,25 +874,17 @@ class SlackBot:
             f"Failed *{queue_status['failed']}*"
         )
 
-        if self.monitor:
-            stats = self.monitor.get_stats()
-            success_rate = stats.get("success_rate")
-            success_text = f"{success_rate:.1f}%" if success_rate is not None else "—"
+        if data['stats']:
+            stats = data['stats']
             lines.append(
                 f"• Lifetime: Completed *{stats['tasks_completed']}*, "
-                f"Failed *{stats['tasks_failed']}*, Success {success_text}"
+                f"Failed *{stats['tasks_failed']}*, Success {data['success_text']}"
             )
             avg_time = stats.get("avg_processing_time")
             if avg_time is not None:
                 lines.append(f"• Avg Duration: {format_duration(avg_time)}")
 
-        live_entries = []
-        if self.live_status_tracker:
-            try:
-                live_entries = self.live_status_tracker.entries()
-            except Exception as exc:  # pragma: no cover - diagnostics
-                logger.debug(f"Live status unavailable: {exc}")
-                live_entries = []
+        live_entries = data['live_entries']
 
         lines.append("")
         lines.append("*Live Sessions*")
@@ -872,7 +909,7 @@ class SlackBot:
         else:
             lines.append("• None")
 
-        running_tasks = self.task_queue.get_in_progress_tasks()
+        running_tasks = data['running_tasks']
         lines.append("")
         lines.append("*Active Tasks*")
         if running_tasks:
@@ -894,7 +931,7 @@ class SlackBot:
         else:
             lines.append("• None")
 
-        pending_tasks = self.task_queue.get_pending_tasks(limit=3)
+        pending_tasks = data['pending_tasks']
         lines.append("")
         lines.append("*Next Up*")
         if pending_tasks:
@@ -911,11 +948,11 @@ class SlackBot:
         else:
             lines.append("• Queue is clear")
 
-        projects = self.task_queue.get_projects()
+        projects = data['projects']
         if projects:
             lines.append("")
             lines.append("*Projects*")
-            projects_sorted = sorted(projects, key=lambda p: p["total_tasks"], reverse=True)
+            projects_sorted = data['projects_sorted']
             display_limit = 4
             for proj in projects_sorted[:display_limit]:
                 name = escape(proj["project_name"] or proj["project_id"] or "—")
@@ -926,8 +963,8 @@ class SlackBot:
             if len(projects_sorted) > display_limit:
                 lines.append(f"• … and {len(projects_sorted) - display_limit} more")
 
-        db = health.get("database", {})
-        storage = health.get("storage", {})
+        db = data['db']
+        storage = data['storage']
         lines.append("")
         lines.append("*Storage*")
         if db:
@@ -947,12 +984,7 @@ class SlackBot:
             else:
                 lines.append("• Results: unavailable")
 
-        budget_info = None
-        if self.scheduler:
-            try:
-                budget_info = self.scheduler.get_credit_status()
-            except Exception as exc:
-                logger.debug(f"Failed to fetch credit status: {exc}")
+        budget_info = data['budget_info']
 
         if budget_info:
             budget = budget_info.get("budget", {})
@@ -986,7 +1018,7 @@ class SlackBot:
                     f"{format_duration(remaining_minutes * 60)} left"
                 )
 
-        recent_tasks = self.task_queue.get_recent_tasks(limit=5)
+        recent_tasks = data['recent_tasks']
         if recent_tasks:
             lines.append("")
             lines.append("*Recent Activity*")

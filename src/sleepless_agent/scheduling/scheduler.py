@@ -149,13 +149,23 @@ class CreditWindow:
 
     WINDOW_SIZE_HOURS = 5
 
-    def __init__(self, start_time: Optional[datetime] = None):
-        """Initialize credit window"""
+    def __init__(self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None):
+        """Initialize credit window
+
+        Args:
+            start_time: Window start time (default: now)
+            end_time: Window end time (default: start_time + 5 hours)
+        """
         if start_time is None:
             start_time = datetime.utcnow()
 
         self.start_time = start_time
-        self.end_time = start_time + timedelta(hours=self.WINDOW_SIZE_HOURS)
+
+        if end_time is not None:
+            self.end_time = end_time
+        else:
+            self.end_time = start_time + timedelta(hours=self.WINDOW_SIZE_HOURS)
+
         self.tasks_executed = 0
         self.estimated_credits_used = 0
 
@@ -178,29 +188,29 @@ class SmartScheduler:
     def __init__(
         self,
         task_queue: TaskQueue,
-        max_parallel_tasks: int = 3,
+        max_parallel_tasks: int = 1,
         daily_budget_usd: float = 10.0,
         night_quota_percent: float = 90.0,
-        use_live_usage_check: bool = True,
-        usage_command: str = "claude /usage",
-        pause_threshold_percent: float = 85.0,
+        usage_command: str = "/usage",
+        pause_threshold_day: float = 20.0,
+        pause_threshold_night: float = 80.0,
     ):
         """Initialize scheduler
 
         Args:
             task_queue: Task queue instance
-            max_parallel_tasks: Maximum parallel tasks (default: 3)
+            max_parallel_tasks: Maximum parallel tasks (default: 1)
             daily_budget_usd: Daily budget in USD (default: $10)
             night_quota_percent: Percentage for night usage (default: 90%)
-            use_live_usage_check: Use live Pro plan usage check instead of budget estimate (default: True)
-            usage_command: CLI command to check usage (default: "claude /usage")
-            pause_threshold_percent: Pause scheduling if usage >= this percent (default: 85%)
+            usage_command: CLI command to check usage (default: "/usage")
+            pause_threshold_day: Pause threshold during daytime (default: 20%)
+            pause_threshold_night: Pause threshold during nighttime (default: 80%)
         """
         self.task_queue = task_queue
         self.max_parallel_tasks = max_parallel_tasks
-        self.use_live_usage_check = use_live_usage_check
         self.usage_command = usage_command
-        self.pause_threshold_percent = pause_threshold_percent
+        self.pause_threshold_day = pause_threshold_day
+        self.pause_threshold_night = pause_threshold_night
 
         # Budget management with time-based allocation
         session = self.task_queue.SessionLocal()
@@ -210,19 +220,17 @@ class SmartScheduler:
             night_quota_percent=night_quota_percent,
         )
 
-        # Pro plan usage checker
-        self.usage_checker = None
-        if self.use_live_usage_check:
-            try:
-                from sleepless_agent.monitoring.pro_plan_usage import ProPlanUsageChecker
-                self.usage_checker = ProPlanUsageChecker(command=usage_command)
-                logger.info(
-                    "scheduler.usage_checker.ready",
-                    command=usage_command,
-                )
-            except ImportError:
-                logger.warning("scheduler.usage_checker.unavailable")
-                self.use_live_usage_check = False
+        # Pro plan usage checker (mandatory)
+        try:
+            from sleepless_agent.monitoring.pro_plan_usage import ProPlanUsageChecker
+            self.usage_checker = ProPlanUsageChecker(command=usage_command)
+            logger.debug(
+                "scheduler.usage_checker.ready",
+                command=usage_command,
+            )
+        except ImportError:
+            logger.error("scheduler.usage_checker.unavailable")
+            raise RuntimeError("ProPlanUsageChecker not available - required for scheduling")
 
         # Legacy credit window support
         self.active_windows: List[CreditWindow] = []
@@ -240,9 +248,17 @@ class SmartScheduler:
 
         # Check if we need a new window
         if not self.current_window or not self.current_window.is_active():
-            self.current_window = CreditWindow(start_time=now)
+            # Get actual reset time from usage checker
+            reset_time = None
+            try:
+                _, reset_time = self.usage_checker.get_usage()
+            except Exception as e:
+                logger.debug("scheduler.credit_window.reset_time_unavailable", error=str(e))
+
+            # Create window with actual reset time or fall back to 5-hour window
+            self.current_window = CreditWindow(start_time=now, end_time=reset_time)
             self.active_windows.append(self.current_window)
-            logger.info(
+            logger.debug(
                 "scheduler.credit_window.new",
                 window_start=self.current_window.start_time.isoformat(),
                 window_end=self.current_window.end_time.isoformat(),
@@ -250,14 +266,15 @@ class SmartScheduler:
             )
 
     def _check_scheduling_allowed(self) -> Tuple[bool, Dict[str, Any]]:
-        """Check if scheduling is allowed based on usage/budget
+        """Check if scheduling is allowed based on live usage monitoring
 
         Returns:
             Tuple of (should_schedule: bool, context: dict)
         """
         now = datetime.utcnow()
 
-        if self.use_live_usage_check and self.usage_pause_until:
+        # Check if we're in a pause window
+        if self.usage_pause_until:
             if now < self.usage_pause_until:
                 remaining = self.usage_pause_until - now
                 context = {
@@ -271,73 +288,59 @@ class SmartScheduler:
             # Pause window has expired; resume normal checks.
             self.usage_pause_until = None
 
-        # Try live usage check first
-        if self.use_live_usage_check and self.usage_checker:
-            try:
-                usage_percent, reset_time = self.usage_checker.get_usage()
+        # Check live usage (mandatory)
+        try:
+            usage_percent, reset_time = self.usage_checker.get_usage()
+            effective_threshold = self._get_effective_threshold()
 
-                if usage_percent >= self.pause_threshold_percent:
-                    pause_base = (
-                        reset_time
-                        if reset_time and reset_time > now
-                        else now + self._usage_pause_default
-                    )
-                    pause_until = pause_base + self._usage_pause_grace
-                    self.usage_pause_until = pause_until
-                    remaining = pause_until - now
-                    context = {
-                        "event": "scheduler.pause.usage_threshold",
-                        "reason": "usage_threshold",
-                        "usage_percent": usage_percent,
-                        "threshold_percent": self.pause_threshold_percent,
-                        "resume_at": pause_until.isoformat(),
-                        "reset_at": reset_time.isoformat() if reset_time else None,
-                        "remaining_seconds": int(remaining.total_seconds()),
-                        "detail": self._format_remaining(remaining),
-                    }
-                    return False, context
-                else:
-                    self.usage_pause_until = None
-                    return True, {
-                        "event": "scheduler.usage.ok",
-                        "reason": "usage_ok",
-                        "usage_percent": usage_percent,
-                    }
-
-            except Exception as e:
-                logger.debug("scheduler.usage.check_failed", error=str(e))
-                self.use_live_usage_check = False
-
-        # Fall back to budget-based check
-        estimated_cost = Decimal("0.50")
-        is_budget_available = self.budget_manager.is_budget_available(estimated_cost=estimated_cost)
-
-        if not is_budget_available:
-            time_label = get_time_label()
-            remaining = self.budget_manager.get_remaining_budget()
-
-            if remaining <= Decimal("0"):
+            if usage_percent >= effective_threshold:
+                pause_base = (
+                    reset_time
+                    if reset_time and reset_time > now
+                    else now + self._usage_pause_default
+                )
+                pause_until = pause_base + self._usage_pause_grace
+                self.usage_pause_until = pause_until
+                remaining = pause_until - now
                 context = {
-                    "event": "scheduler.pause.budget_exhausted",
-                    "reason": "budget_exhausted",
-                    "time_period": time_label,
-                    "remaining_budget_usd": float(remaining),
+                    "event": "scheduler.pause.usage_threshold",
+                    "reason": "usage_threshold",
+                    "usage_percent": usage_percent,
+                    "threshold_percent": effective_threshold,
+                    "resume_at": pause_until.isoformat(),
+                    "reset_at": reset_time.isoformat() if reset_time else None,
+                    "remaining_seconds": int(remaining.total_seconds()),
+                    "detail": self._format_remaining(remaining),
                 }
+                return False, context
             else:
-                context = {
-                    "event": "scheduler.pause.budget_low",
-                    "reason": "budget_insufficient",
-                    "time_period": time_label,
-                    "remaining_budget_usd": float(remaining),
-                    "estimated_task_cost_usd": float(estimated_cost),
+                self.usage_pause_until = None
+                return True, {
+                    "event": "scheduler.usage.ok",
+                    "reason": "usage_ok",
+                    "usage_percent": usage_percent,
+                    "threshold_percent": effective_threshold,
                 }
-            return False, context
-        else:
-            return True, {
-                "event": "scheduler.budget.ok",
-                "reason": "budget_ok",
-                "remaining_budget_usd": float(self.budget_manager.get_remaining_budget()),
+
+        except Exception as e:
+            logger.error("scheduler.usage.check_failed", error=str(e))
+            # No fallback - usage checking is mandatory
+            context = {
+                "event": "scheduler.pause.usage_check_failed",
+                "reason": "usage_check_failed",
+                "error": str(e),
             }
+            return False, context
+
+    def _get_effective_threshold(self) -> float:
+        """Get threshold based on current time period
+
+        Returns:
+            Threshold percentage (0-100) from config:
+            - Daytime: pause_threshold_day
+            - Nighttime: pause_threshold_night
+        """
+        return self.pause_threshold_night if is_nighttime() else self.pause_threshold_day
 
     @staticmethod
     def _format_remaining(delta: timedelta) -> str:
@@ -356,7 +359,7 @@ class SmartScheduler:
 
     def get_pause_remaining_seconds(self) -> Optional[float]:
         """Return remaining pause duration in seconds if scheduling is halted."""
-        if not (self.use_live_usage_check and self.usage_pause_until):
+        if not self.usage_pause_until:
             return None
         remaining = (self.usage_pause_until - datetime.utcnow()).total_seconds()
         return remaining if remaining > 0 else None
@@ -404,19 +407,49 @@ class SmartScheduler:
         # Get pending tasks in priority order
         pending = self.task_queue.get_pending_tasks(limit=available_slots)
 
-        # Log usage/budget info when scheduling
+        # Enhanced dispatch log with detailed decision-making context
         if pending:
-            payload: Dict[str, Any] = {"tasks": len(pending)}
-            if context.get("reason") in {"usage_ok", "usage_threshold"} and context.get("usage_percent") is not None:
+            # Get queue status
+            queue_status = self.task_queue.get_queue_status()
+
+            # Get time context
+            time_label = get_time_label()
+            is_night = is_nighttime()
+
+            # Build comprehensive log payload explaining the scheduling decision
+            payload: Dict[str, Any] = {
+                "dispatching_tasks": len(pending),
+                "time_period": time_label,
+                "is_nighttime": is_night,
+            }
+
+            # Add usage information if available (live usage check)
+            if context.get("usage_percent") is not None:
+                effective_threshold = context.get("threshold_percent", self._get_effective_threshold())
                 payload["usage_percent"] = context["usage_percent"]
-            else:
-                budget_status = self.budget_manager.get_budget_status()
-                payload.update(
-                    {
-                        "time_period": budget_status["time_period"],
-                        "remaining_budget_usd": budget_status["remaining_budget_usd"],
-                    }
-                )
+                payload["threshold_percent"] = effective_threshold
+                payload["decision_reason"] = f"usage {context['usage_percent']}% < threshold {effective_threshold}%"
+
+            # Add budget information
+            if self.budget_manager:
+                quota = self.budget_manager.get_current_quota()
+                usage = self.budget_manager.get_current_time_period_usage()
+                remaining = self.budget_manager.get_remaining_budget()
+                payload["quota_usd"] = float(quota)
+                payload["usage_usd"] = float(usage)
+                payload["remaining_usd"] = float(remaining)
+
+                # Add budget allocation context
+                if is_night:
+                    payload["quota_allocation"] = f"night: {self.budget_manager.night_quota_percent}%"
+                else:
+                    payload["quota_allocation"] = f"daytime: {self.budget_manager.day_quota_percent}%"
+
+            # Add queue status
+            payload["queue_pending"] = queue_status.get("pending", 0)
+            payload["queue_in_progress"] = queue_status.get("in_progress", 0)
+            payload["available_slots"] = available_slots
+
             logger.info("scheduler.dispatch", **payload)
 
         return pending
@@ -494,8 +527,9 @@ class SmartScheduler:
             session.add(usage)
             session.commit()
 
+            # Move to DEBUG - usage recording is an internal metric
             if total_cost_usd is not None:
-                logger.info(
+                logger.debug(
                     "scheduler.usage.recorded",
                     task_id=task_id,
                     cost_usd=total_cost_usd,
