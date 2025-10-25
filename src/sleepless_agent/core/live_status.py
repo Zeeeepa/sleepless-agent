@@ -49,15 +49,18 @@ class LiveStatusEntry:
 
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "LiveStatusEntry":
+        task_id_raw = payload.get("task_id")
+        if task_id_raw is None:
+            raise ValueError("task_id is required in payload")
         return cls(
-            task_id=int(payload.get("task_id")),
-            description=payload.get("description", ""),
+            task_id=int(task_id_raw),
+            description=str(payload.get("description", "")),
             project_name=payload.get("project_name"),
-            phase=payload.get("phase", "initializing"),
-            prompt_preview=payload.get("prompt_preview", ""),
-            answer_preview=payload.get("answer_preview", ""),
-            status=payload.get("status", "running"),
-            updated_at=payload.get("updated_at", _utc_now_iso()),
+            phase=str(payload.get("phase", "initializing")),
+            prompt_preview=str(payload.get("prompt_preview", "")),
+            answer_preview=str(payload.get("answer_preview", "")),
+            status=str(payload.get("status", "running")),
+            updated_at=str(payload.get("updated_at", _utc_now_iso())),
         )
 
 
@@ -114,10 +117,12 @@ class LiveStatusTracker:
             changed = False
             for key, value in list(data.items()):
                 updated_at = value.get("updated_at")
-                try:
-                    stamp = datetime.fromisoformat(updated_at)
-                except Exception:
-                    stamp = None
+                stamp: Optional[datetime] = None
+                if updated_at is not None:
+                    try:
+                        stamp = datetime.fromisoformat(str(updated_at))
+                    except Exception:
+                        stamp = None
                 if not stamp or stamp < cutoff:
                     del data[key]
                     changed = True

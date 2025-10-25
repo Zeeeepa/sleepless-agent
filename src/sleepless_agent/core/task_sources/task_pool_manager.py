@@ -1,6 +1,6 @@
 """Manage predefined task pool for auto-generation"""
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from loguru import logger
 from sqlalchemy.orm import Session

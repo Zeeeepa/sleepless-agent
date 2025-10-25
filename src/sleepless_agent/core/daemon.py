@@ -151,11 +151,14 @@ class SleepleassAgent:
             while self.running:
                 await self._process_tasks()
 
-                # Check and generate tasks if usage is low
-                try:
-                    await self.auto_generator.check_and_generate()
-                except Exception as e:
-                    logger.error(f"Error in auto-generation: {e}")
+                pause_seconds = self.scheduler.get_pause_remaining_seconds()
+
+                # Check and generate tasks if usage is low and scheduling isn't paused
+                if pause_seconds is None:
+                    try:
+                        await self.auto_generator.check_and_generate()
+                    except Exception as e:
+                        logger.error(f"Error in auto-generation: {e}")
 
                 # Log health report every 60 seconds
                 health_check_counter += 1
@@ -166,7 +169,12 @@ class SleepleassAgent:
                 # Daily report summarization at end of day (11:59 PM UTC)
                 self._check_and_summarize_daily_reports()
 
-                await asyncio.sleep(5)  # Check tasks every 5 seconds
+                sleep_seconds = 5.0
+                pause_seconds = self.scheduler.get_pause_remaining_seconds()
+                if pause_seconds:
+                    # Cap the sleep interval to remain responsive for other periodic duties.
+                    sleep_seconds = max(5.0, min(pause_seconds, 300.0))
+                await asyncio.sleep(sleep_seconds)
 
         except KeyboardInterrupt:
             logger.info("Agent interrupted by user")
