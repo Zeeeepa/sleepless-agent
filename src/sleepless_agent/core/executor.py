@@ -5,6 +5,7 @@ import re
 import subprocess
 import time
 from collections import OrderedDict
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple, List, Dict
 import shutil
@@ -126,8 +127,53 @@ class ClaudeCodeExecutor:
             self.live_status_tracker.clear(task_id)
         except Exception as exc:  # pragma: no cover - debug aid
             logger.debug("executor.live_status.clear_failed", task_id=task_id, error=str(exc))
-        finally:
-            self._live_context.pop(task_id, None)
+
+    def _live_phase_start(
+        self,
+        task_id: int,
+        phase: str,
+        prompt: str,
+    ) -> None:
+        """Helper for starting a new phase with live status update."""
+        self._live_update(
+            task_id,
+            phase=phase,
+            prompt=prompt[:500] if prompt else "",
+            answer="",
+            status="running",
+        )
+
+    def _live_phase_progress(
+        self,
+        task_id: int,
+        phase: str,
+        prompt: str,
+        answer: str,
+    ) -> None:
+        """Helper for updating phase progress with live status."""
+        self._live_update(
+            task_id,
+            phase=phase,
+            prompt=prompt[:500] if prompt else "",
+            answer=answer,
+            status="running",
+        )
+
+    def _live_phase_complete(
+        self,
+        task_id: int,
+        phase: str,
+        prompt: str,
+        answer: str,
+    ) -> None:
+        """Helper for completing a phase with live status update."""
+        self._live_update(
+            task_id,
+            phase=phase,
+            prompt=prompt[:500] if prompt else "",
+            answer=answer,
+            status="completed",
+        )
 
     def _get_readme_template(self, template_type: str = "task") -> str:
         """Get README template content
@@ -189,8 +235,6 @@ class ClaudeCodeExecutor:
             return readme_path
 
         try:
-            from datetime import datetime
-
             template = self._get_readme_template("task")
             content = template.format(
                 TASK_ID=task_id,
@@ -287,8 +331,6 @@ class ClaudeCodeExecutor:
         readme_path = workspace / "README.md"
 
         try:
-            from datetime import datetime
-
             if not readme_path.exists():
                 return
 
@@ -527,8 +569,6 @@ class ClaudeCodeExecutor:
         Returns:
             Tuple of (plan_text, usage_metrics)
         """
-        from datetime import datetime
-
         # Add workspace task type context
         task_type_note = ""
         if workspace_task_type == "refine":
@@ -1490,103 +1530,6 @@ Output should include:
         finally:
             self._live_context.pop(task_id, None)
 
-    def _build_prompt(self, description: str, task_type: str, priority: str, workspace_task_type: Optional[str] = None) -> str:
-        """Build enhanced prompt for Claude Code
-
-        Args:
-            description: Task description
-            task_type: Type of task (code, research, etc.)
-            priority: Task priority
-            workspace_task_type: Workspace task type ("new" or "refine")
-
-        Returns:
-            Enhanced prompt string
-        """
-        # Workspace task type context
-        workspace_context = ""
-        if workspace_task_type == "refine":
-            workspace_context = """
-🔧 REFINE TASK: This workspace contains a copy of the sleepless-agent source code.
-Your goal is to IMPROVE the existing codebase:
-- Analyze the current implementation
-- Refactor and optimize existing code
-- Fix bugs or issues
-- Add missing features to existing modules
-- Improve code quality, tests, or documentation
-
-The changes you make should enhance the existing codebase and can be merged back to the main project."""
-        elif workspace_task_type == "new":
-            workspace_context = """
-🆕 NEW TASK: This is a fresh workspace.
-Your goal is to BUILD new functionality from scratch:
-- Design and implement new features
-- Create new modules or tools
-- Build standalone projects or prototypes
-- Experiment with new ideas
-
-Feel free to start from a blank slate and create something new!"""
-
-        # Task type specific instructions
-        type_instructions = {
-            "code": """You are an expert software engineer. Use the available tools to:
-1. Read and understand relevant code
-2. Implement the solution
-3. Test your changes
-4. Provide clear documentation""",
-
-            "research": """You are a research expert. Use tools to:
-1. Search and analyze files
-2. Extract key information
-3. Provide insights and recommendations
-4. Summarize your findings""",
-
-            "brainstorm": """You are a creative thinker. Brainstorm ideas:
-1. Explore multiple approaches
-2. Consider pros and cons
-3. Recommend next steps
-4. Think outside the box""",
-
-            "documentation": """You are a technical writer. Create documentation:
-1. Read code as needed
-2. Write clear, structured content
-3. Include examples and best practices
-4. Make it accessible""",
-
-            "general": """Process the following task using available tools as needed.
-Be thorough, methodical, and provide clear explanations.""",
-        }
-
-        instructions = type_instructions.get(task_type, type_instructions["general"])
-
-        # Priority-specific notes
-        if priority == "serious":
-            priority_note = """
-⚠️  IMPORTANT: This is a SERIOUS task requiring careful implementation.
-- Write production-quality code
-- Test your changes thoroughly
-- Follow best practices and conventions
-- Commit your work with clear messages when done
-"""
-        else:
-            priority_note = """
-💡 NOTE: This is a RANDOM THOUGHT - feel free to experiment!
-- Try creative approaches
-- It's okay to be experimental
-- Have fun with it!
-"""
-
-        # Build full prompt
-        prompt = f"""{instructions}
-{workspace_context}
-{priority_note}
-
-TASK:
-{description}
-
-Please complete this task and provide a summary of what you did at the end.
-"""
-
-        return prompt
 
     def _get_workspace_files(self, workspace: Path) -> set:
         """Get set of all files in workspace (excluding metadata and .git)
@@ -1627,7 +1570,7 @@ Please complete this task and provide a summary of what you did at the end.
                     if not should_exclude:
                         files.add(str(relative_path))
         except Exception as e:
-            logger.warning("executor.workspace.scan_failed", error=str(e), workspace=str(workspace_path))
+            logger.warning("executor.workspace.scan_failed", error=str(e), workspace=str(workspace))
 
         return files
 
@@ -1679,7 +1622,6 @@ Please complete this task and provide a summary of what you did at the end.
             # Check if workspace is empty or force cleanup
             contents = list(workspace.iterdir())
             if force or len(contents) == 0:
-                import shutil
                 shutil.rmtree(workspace)
                 logger.debug("executor.workspace.cleaned", workspace=str(workspace))
                 return True
