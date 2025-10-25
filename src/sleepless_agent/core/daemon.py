@@ -38,7 +38,9 @@ class SleeplessAgent:
         self.running = False
         self.last_daily_summarization: datetime | None = None
 
-        setup = WorkspaceSetup(self.config.agent)
+        # Pass git config if it exists
+        git_config = getattr(self.config, 'git', None)
+        setup = WorkspaceSetup(self.config.agent, git_config=git_config)
         setup_result = setup.run()
         self.use_remote_repo = setup_result.use_remote_repo
         self.remote_repo_url = setup_result.remote_repo_url

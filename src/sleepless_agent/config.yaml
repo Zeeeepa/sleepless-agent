@@ -1,9 +1,13 @@
 claude_code:
   binary_path: claude
   model: claude-sonnet-4-5-20250929
-  pause_threshold_day: 20.0
+  pause_threshold_day: 80.0
   pause_threshold_night: 80.0
-  usage_command: /usage
+  usage_command: claude /usage
+
+git:
+  use_remote_repo: true
+  remote_repo_url: git@github.com:TimeLovercc/sleepless-agent.git
 
 agent:
   workspace_root: ./workspace
@@ -52,5 +56,4 @@ auto_generation:
         IMPORTANT: Classify the task type and prefix your response with [NEW] or [REFINE].
         Respond with the type prefix followed by a single task description in 1-2 sentences.
       weight: 0.3
-
 

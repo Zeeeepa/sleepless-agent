@@ -280,9 +280,9 @@ class SmartScheduler:
                 context = {
                     "event": "scheduler.pause.pending",
                     "reason": "usage_pause",
-                    "resume_at": self.usage_pause_until.isoformat(),
-                    "remaining_seconds": int(remaining.total_seconds()),
+                    "resume_at": self.usage_pause_until.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z'),
                     "detail": self._format_remaining(remaining),
+                    "decision_logic": "Pausing: in pause window, waiting for resume time",
                 }
                 return False, context
             # Pause window has expired; resume normal checks.
@@ -302,15 +302,15 @@ class SmartScheduler:
                 pause_until = pause_base + self._usage_pause_grace
                 self.usage_pause_until = pause_until
                 remaining = pause_until - now
+                time_period = "nighttime" if is_nighttime() else "daytime"
                 context = {
                     "event": "scheduler.pause.usage_threshold",
                     "reason": "usage_threshold",
                     "usage_percent": usage_percent,
                     "threshold_percent": effective_threshold,
-                    "resume_at": pause_until.isoformat(),
-                    "reset_at": reset_time.isoformat() if reset_time else None,
-                    "remaining_seconds": int(remaining.total_seconds()),
+                    "resume_at": pause_until.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z'),
                     "detail": self._format_remaining(remaining),
+                    "decision_logic": f"Pausing: usage {usage_percent}% >= threshold {effective_threshold}% ({time_period})",
                 }
                 return False, context
             else:

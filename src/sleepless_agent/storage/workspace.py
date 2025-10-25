@@ -22,23 +22,33 @@ class WorkspaceConfigResult:
 class WorkspaceSetup:
     """Handle first-run setup for workspace configuration."""
 
-    def __init__(self, agent_config):
+    def __init__(self, agent_config, git_config=None):
         self.agent_config = agent_config
+        self.git_config = git_config  # git config from config.yaml
         self.state_path = Path.home() / ".sleepless_agent_setup.json"
         self.default_workspace = agent_config.workspace_root.expanduser().resolve()
         self.repo_root = Path.cwd()
         self.default_remote_url = self._detect_default_remote_url()
 
     def run(self) -> WorkspaceConfigResult:
-        """Load previous setup or prompt the user, then apply to config."""
-        data = self._load_state()
-        if not data:
-            data = self._prompt_user()
-            self._save_state(data)
+        """Load configuration from config.yaml first, then fall back to JSON file or prompts."""
+        # First priority: config.yaml git section
+        if self.git_config:
+            use_remote_repo = bool(self.git_config.get("use_remote_repo", False))
+            remote_repo_url = self.git_config.get("remote_repo_url")
+            workspace_root = self.default_workspace
 
-        workspace_root = Path(data.get("workspace_root", self.default_workspace)).expanduser().resolve()
-        use_remote_repo = bool(data.get("use_remote_repo", False))
-        remote_repo_url = data.get("remote_repo_url")
+            logger.info("Using git configuration from config.yaml")
+        else:
+            # Fall back to JSON file or prompts
+            data = self._load_state()
+            if not data:
+                data = self._prompt_user()
+                self._save_state(data)
+
+            workspace_root = Path(data.get("workspace_root", self.default_workspace)).expanduser().resolve()
+            use_remote_repo = bool(data.get("use_remote_repo", False))
+            remote_repo_url = data.get("remote_repo_url")
 
         self._apply_workspace_root(workspace_root)
 
