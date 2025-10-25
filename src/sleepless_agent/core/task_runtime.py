@@ -18,7 +18,7 @@ from sleepless_agent.storage.git import GitManager
 from sleepless_agent.storage.results import ResultManager
 from sleepless_agent.core.executor import ClaudeCodeExecutor
 from sleepless_agent.interfaces.bot import SlackBot
-from sleepless_agent.exceptions import PauseException
+from sleepless_agent.utils.exceptions import PauseException
 
 logger = get_logger(__name__)
 

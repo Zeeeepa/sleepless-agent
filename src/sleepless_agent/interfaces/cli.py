@@ -23,7 +23,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from sleepless_agent.config import get_config
+from sleepless_agent.utils.config import get_config
 from sleepless_agent.core.models import TaskPriority, TaskStatus, init_db
 from sleepless_agent.core.queue import TaskQueue
 from sleepless_agent.utils.display import format_age_seconds, format_duration, relative_time, shorten

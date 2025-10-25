@@ -26,8 +26,7 @@ dependencies = [
     "slack-sdk",
     "sqlalchemy",
     "python-dotenv",
-    "pydantic",
-    "pydantic-settings",
+    "PyYAML",
     "gitpython",
     "aiosqlite",
     "loguru",
@@ -46,6 +45,9 @@ Repository = "https://github.com/context-machine-lab/sleepless-agent"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+
+[tool.setuptools.package-data]
+"sleepless_agent" = ["config.yaml"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

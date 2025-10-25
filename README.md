@@ -218,7 +218,7 @@ Result Manager (Storage + Git)
 - **claude_code_executor.py**: Python Agent SDK wrapper with isolated workspace management
 - **results.py**: Result storage, file management
 - **models.py**: SQLAlchemy models for Task, Result
-- **config.py**: Configuration management
+- **config.yaml**: Configuration defaults
 - **git_manager.py**: Git automation (commits, PRs)
 - **monitor.py**: Health checks and metrics
 
@@ -237,7 +237,7 @@ sleepless-agent/
 │   ├── monitor.py          # Health & metrics
 │   ├── models.py           # Database models
 │   ├── results.py          # Result storage
-│   └── config.py           # Config management
+│   └── config.yaml         # Config defaults
 ├── workspace/              # All persistent data and task workspaces
 │   ├── data/               # Persistent storage
 │   │   ├── tasks.db        # SQLite database
@@ -280,7 +280,7 @@ The agent automatically monitors your Claude Code Pro plan usage and prevents ta
 **Visibility:**
 - Dashboard: Shows `Pro Usage: X% / 85% limit` in `sle check`
 - Logs: Each usage check logs `Pro plan usage: X/40 (Y% / 85% pause threshold)`
-- Config: Adjustable via `ProPlanMonitoringConfig.pause_threshold` (default: 85.0)
+- Config: Adjustable via `multi_agent_workflow.pro_plan_monitoring.pause_threshold` in `config.yaml` (default: 85.0)
 
 **What happens at 85%:**
 - ⏸️ New task generation pauses
@@ -291,7 +291,7 @@ The agent automatically monitors your Claude Code Pro plan usage and prevents ta
 
 To disable Pro plan monitoring (not recommended):
 ```python
-# In config: ProPlanMonitoringConfig.enabled = False
+# In config.yaml: multi_agent_workflow.pro_plan_monitoring.enabled = false
 ```
 
 ## Environment Variables
@@ -419,7 +419,7 @@ launchctl list | grep sleepless
 |-------|----------|
 | Bot not responding | Check `.env` tokens, verify Socket Mode enabled, check logs: `tail -f workspace/data/agent.log` |
 | Tasks not executing | Verify Claude Code CLI installed: `npm list -g @anthropic-ai/claude-code`, check workspace permissions |
-| Tasks paused (85% threshold) | Usage has reached 85% of Pro plan limit. Wait for window reset (check logs for reset time), or adjust threshold in config: `ProPlanMonitoringConfig.pause_threshold`. Run `sle check` to see current usage. |
+| Tasks paused (85% threshold) | Usage has reached 85% of Pro plan limit. Wait for window reset (check logs for reset time), or adjust threshold in `config.yaml` (`multi_agent_workflow.pro_plan_monitoring.pause_threshold`). Run `sle check` to see current usage. |
 | Git commits fail | Install `gh` CLI and authenticate: `gh auth login` |
 | Out of credits | Wait for 5-hour window refresh. Review scheduler logs: `tail -f workspace/data/agent.log | grep credit` |
 | Database locked | Close other connections, try: `rm workspace/data/tasks.db && python -m sleepless_agent.daemon` |

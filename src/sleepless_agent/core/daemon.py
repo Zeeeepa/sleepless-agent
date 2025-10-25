@@ -10,7 +10,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import sessionmaker
 
-from sleepless_agent.config import get_config
+from sleepless_agent.utils.config import get_config
 from sleepless_agent.storage.results import ResultManager
 from sleepless_agent.scheduling.auto_generator import AutoTaskGenerator
 from sleepless_agent.scheduling.scheduler import BudgetManager, SmartScheduler

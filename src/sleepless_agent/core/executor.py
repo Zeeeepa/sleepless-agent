@@ -547,7 +547,7 @@ Generated: {datetime.utcnow().isoformat()}
         try:
             from sleepless_agent.core.queue import TaskQueue
             from sleepless_agent.core.models import TaskPriority
-            from sleepless_agent.config import get_config
+            from sleepless_agent.utils.config import get_config
 
             config = get_config()
             queue = TaskQueue(str(config.agent.db_path))
@@ -1049,9 +1049,9 @@ Output should include:
 
             # Check Pro plan usage after evaluation
             try:
-                from sleepless_agent.config import get_config
+                from sleepless_agent.utils.config import get_config
                 from sleepless_agent.monitoring.pro_plan_usage import ProPlanUsageChecker
-                from sleepless_agent.exceptions import PauseException
+                from sleepless_agent.utils.exceptions import PauseException
 
                 config = get_config()
                 if config.multi_agent_workflow.pro_plan_monitoring.enabled:
@@ -1105,7 +1105,7 @@ Output should include:
             task_id: Task ID (for logging)
         """
         try:
-            from sleepless_agent.config import get_config
+            from sleepless_agent.utils.config import get_config
 
             config = get_config()
             task_type_config = config.auto_generation.task_type
@@ -1287,7 +1287,7 @@ Output should include:
             start_time = time.time()
 
             # Get configuration
-            from sleepless_agent.config import get_config
+            from sleepless_agent.utils.config import get_config
             config = get_config()
             multi_agent_config = config.multi_agent_workflow
 

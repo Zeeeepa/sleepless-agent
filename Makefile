@@ -48,15 +48,15 @@ clean:
 
 install-service:
 	@echo "Installing systemd service..."
-	sudo cp deployment/sleepless-agent.service /etc/systemd/system/
+	sudo cp src/sleepless_agent/deployment/sleepless-agent.service /etc/systemd/system/
 	sudo systemctl daemon-reload
 	sudo systemctl enable sleepless-agent
 	@echo "✓ Service installed. Start with: sudo systemctl start sleepless-agent"
 
 install-launchd:
 	@echo "Installing launchd service..."
-	@echo "Note: Update WorkingDirectory in deployment/com.sleepless-agent.plist first!"
-	cp deployment/com.sleepless-agent.plist ~/Library/LaunchAgents/
+	@echo "Note: Update WorkingDirectory in src/sleepless_agent/deployment/com.sleepless-agent.plist first!"
+	cp src/sleepless_agent/deployment/com.sleepless-agent.plist ~/Library/LaunchAgents/
 	launchctl load ~/Library/LaunchAgents/com.sleepless-agent.plist
 	@echo "✓ Service installed and running"
 
