@@ -91,7 +91,7 @@ def main():
     from pathlib import Path
 
     if len(sys.argv) < 2:
-        print("Usage: python -m sleepless_agent.core.migrate_db <db_path>")
+        print("Usage: python -m sleepless_agent.tasks.migrations.migrate_db <db_path>")
         print("\nMigrates existing database to add performance indexes.")
         sys.exit(1)
 

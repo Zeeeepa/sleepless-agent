@@ -13,11 +13,11 @@ from slack_sdk.socket_mode import SocketModeClient
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
 
-from sleepless_agent.core.display import format_age_seconds, format_duration, relative_time, shorten
-from sleepless_agent.core.models import TaskPriority, TaskStatus
-from sleepless_agent.core.task_queue import TaskQueue
-from sleepless_agent.core.task_utils import prepare_task_creation
-from sleepless_agent.core.live_status import LiveStatusTracker
+from sleepless_agent.workspaces.display import format_age_seconds, format_duration, relative_time, shorten
+from sleepless_agent.tasks.models import TaskPriority, TaskStatus
+from sleepless_agent.tasks.queue import TaskQueue
+from sleepless_agent.tasks.utils import prepare_task_creation
+from sleepless_agent.workspaces.live_status import LiveStatusTracker
 from sleepless_agent.monitoring.report_generator import ReportGenerator
 
 

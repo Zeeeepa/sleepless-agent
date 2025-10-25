@@ -11,8 +11,8 @@ logger = get_logger(__name__)
 
 from sqlalchemy.orm import Session
 
-from sleepless_agent.core.models import GenerationHistory, Task, TaskPriority, TaskStatus
-from sleepless_agent.core.task_queue import TaskQueue
+from sleepless_agent.tasks.models import GenerationHistory, Task, TaskPriority, TaskStatus
+from sleepless_agent.tasks.queue import TaskQueue
 
 
 REFINEMENT_CONTEXT_KEY = "refinement_parent_task_id"

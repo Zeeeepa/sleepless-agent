@@ -22,6 +22,7 @@ else:  # pragma: no cover - platform dependent
     select = None  # type: ignore[assignment]
 
 from sleepless_agent.logging import get_logger
+
 logger = get_logger(__name__)
 
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -70,6 +71,7 @@ class ProPlanUsageChecker:
         self.cached_usage: Optional[Tuple[float, Optional[datetime]]] = None
         self.cache_duration_seconds = 60
         self.last_timezone_str: Optional[str] = None
+        self._last_logged_usage: Optional[Tuple[float, Optional[datetime]]] = None
 
     def get_usage(self) -> Tuple[float, Optional[datetime]]:
         """Execute CLI command and parse usage response as percentage plus reset time."""
@@ -78,13 +80,20 @@ class ProPlanUsageChecker:
             if self.cached_usage and self.last_check_time:
                 cache_age = (datetime.utcnow() - self.last_check_time).total_seconds()
                 if cache_age < self.cache_duration_seconds:
-                    logger.debug(f"Using cached usage data (age: {cache_age:.0f}s)")
+                    logger.debug(
+                        "usage.cache.hit",
+                        age_seconds=int(cache_age),
+                    )
                     return self.cached_usage
 
             try:
                 command_args = tuple(shlex.split(self.command))
             except ValueError as exc:
-                logger.error(f"Invalid usage command '{self.command}': {exc}")
+                logger.error(
+                    "usage.command.invalid",
+                    command=self.command,
+                    error=str(exc),
+                )
                 return self._fallback_usage()
 
             raw_output, return_code = self._execute_command(command_args)
@@ -94,26 +103,27 @@ class ProPlanUsageChecker:
             if return_code not in (0, -15, -9):  # 0 = success, -15 = SIGTERM, -9 = SIGKILL
                 if cleaned_output:
                     logger.warning(
-                        "Claude usage command returned non-zero exit code: "
-                        f"{return_code}"
+                        "usage.command.nonzero_exit",
+                        return_code=return_code,
                     )
                 else:
                     logger.error(
-                        "Claude usage command failed with return code: "
-                        f"{return_code}"
+                        "usage.command.failed",
+                        return_code=return_code,
                     )
 
             if not cleaned_output:
-                logger.warning(
-                    "Claude usage command returned no output; falling back to cached or default usage data."
-                )
+                logger.warning("usage.command.empty_output")
                 return self._fallback_usage()
 
             # Parse output
             try:
                 usage_percent, reset_time = self._parse_usage_output(cleaned_output)
             except RuntimeError as parse_error:
-                logger.warning(f"Could not interpret usage output: {parse_error}")
+                logger.warning(
+                    "usage.parse_failed",
+                    error=str(parse_error),
+                )
                 return self._fallback_usage()
 
             # Cache result
@@ -134,16 +144,22 @@ class ProPlanUsageChecker:
             else:
                 reset_label = "unknown"
 
-            logger.info(
-                f"Pro plan usage: {usage_percent:.1f}% - resets at {reset_label}"
-            )
+            previous_snapshot = self._last_logged_usage
+            if previous_snapshot != (usage_percent, reset_time):
+                logger.info(
+                    "usage.snapshot",
+                    usage_percent=usage_percent,
+                    reset_at=reset_time.isoformat() if reset_time else None,
+                    reset_label=reset_label,
+                )
+                self._last_logged_usage = (usage_percent, reset_time)
 
             return usage_percent, reset_time
 
         except RuntimeError:
             raise
         except Exception as e:
-            logger.error(f"Failed to get usage: {e}")
+            logger.error("usage.command.exception", error=str(e))
             raise
 
     def _execute_command(self, command_args: Tuple[str, ...]) -> Tuple[str, int]:
@@ -172,7 +188,7 @@ class ProPlanUsageChecker:
         try:
             output, stderr_output = process.communicate(timeout=5)
         except subprocess.TimeoutExpired:
-            logger.debug("Usage command still running after 5s, terminating process (pipe mode)")
+            logger.debug("usage.command.timeout", mode="pipes", timeout_seconds=5)
             process.terminate()
             try:
                 output, stderr_output = process.communicate(timeout=2)
@@ -314,7 +330,11 @@ class ProPlanUsageChecker:
             match = re.search(r'(\d+(?:\.\d+)?)\s*%\s*(?:used|usage|of|remaining)?', line, re.IGNORECASE)
             if match:
                 usage_percent = float(match.group(1))
-                logger.debug(f"Parsed direct percentage format: {usage_percent:.2f}%")
+                logger.debug(
+                    "usage.parse.format",
+                    format="direct_percent",
+                    usage_percent=usage_percent,
+                )
                 break
 
         # Ratios like "You have used 28 of 40 messages"
@@ -326,7 +346,13 @@ class ProPlanUsageChecker:
                     total = int(match.group(2))
                     if total > 0:
                         usage_percent = used / total * 100
-                        logger.debug(f"Parsed ratio format (used/of): {usage_percent:.2f}%")
+                        logger.debug(
+                            "usage.parse.format",
+                            format="used_of_total",
+                            used=used,
+                            total=total,
+                            usage_percent=usage_percent,
+                        )
                         break
 
         # Ratios like "Messages: 28/40"
@@ -338,7 +364,13 @@ class ProPlanUsageChecker:
                     total = int(match.group(2))
                     if total > 0:
                         usage_percent = used / total * 100
-                        logger.debug(f"Parsed ratio format (slash): {usage_percent:.2f}%")
+                        logger.debug(
+                            "usage.parse.format",
+                            format="messages_slash",
+                            used=used,
+                            total=total,
+                            usage_percent=usage_percent,
+                        )
                         break
 
         # Format "28 messages used, 12 remaining"
@@ -353,7 +385,13 @@ class ProPlanUsageChecker:
                         total = used + remaining
                         if total > 0:
                             usage_percent = used / total * 100
-                            logger.debug(f"Parsed used/remaining format: {usage_percent:.2f}%")
+                            logger.debug(
+                                "usage.parse.format",
+                                format="used_remaining",
+                                used=used,
+                                remaining=remaining,
+                                usage_percent=usage_percent,
+                            )
                     break
 
         if usage_percent is None:
@@ -535,7 +573,7 @@ class ProPlanUsageChecker:
         try:
             return ZoneInfo(label)
         except ZoneInfoNotFoundError:
-            logger.debug("Unknown timezone label received from CLI: {}", label)
+            logger.debug("usage.timezone.unknown", label=label)
             return None
 
     @staticmethod
@@ -583,13 +621,15 @@ class ProPlanUsageChecker:
 
             if should_pause:
                 logger.warning(
-                    f"Usage threshold exceeded: {usage_percent:.1f}% >= {threshold_percent:.1f}%"
+                    "usage.threshold.exceeded",
+                    usage_percent=usage_percent,
+                    threshold_percent=threshold_percent,
                 )
 
             return should_pause, reset_time
 
         except Exception as e:
-            logger.error(f"Error checking threshold: {e}")
+            logger.error("usage.threshold.error", error=str(e))
             # Return False to not pause on error
             return False, None
 
@@ -598,11 +638,11 @@ class ProPlanUsageChecker:
         Provide cached usage if available, otherwise return a conservative default.
         """
         if self.cached_usage and self.last_check_time:
-            logger.debug("Using cached usage data after failed usage command.")
+            logger.debug("usage.cache.fallback")
             return self.cached_usage
 
         fallback = (0.0, None)
         self.cached_usage = fallback
         self.last_check_time = datetime.utcnow()
-        logger.info("Defaulting to 0.0%% usage with unknown reset time due to missing usage data.")
+        logger.info("usage.fallback.default")
         return fallback

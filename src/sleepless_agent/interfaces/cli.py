@@ -24,11 +24,11 @@ from rich.table import Table
 from rich.text import Text
 
 from sleepless_agent.config import get_config
-from sleepless_agent.core import TaskPriority, TaskQueue, init_db
-from sleepless_agent.core.models import TaskStatus
-from sleepless_agent.core.display import format_age_seconds, format_duration, relative_time, shorten
-from sleepless_agent.core.live_status import LiveStatusTracker
-from sleepless_agent.core.task_utils import prepare_task_creation
+from sleepless_agent.tasks.models import TaskPriority, TaskStatus, init_db
+from sleepless_agent.tasks.queue import TaskQueue
+from sleepless_agent.workspaces.display import format_age_seconds, format_duration, relative_time, shorten
+from sleepless_agent.workspaces.live_status import LiveStatusTracker
+from sleepless_agent.tasks.utils import prepare_task_creation
 from sleepless_agent.monitoring.monitor import HealthMonitor
 from sleepless_agent.monitoring.report_generator import ReportGenerator
 

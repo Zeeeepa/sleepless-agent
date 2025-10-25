@@ -27,6 +27,12 @@ class TaskStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class TaskType(str, Enum):
+    """Task type: NEW (build from scratch) vs REFINE (improve existing code)"""
+    NEW = "new"  # Create new functionality in empty workspace
+    REFINE = "refine"  # Improve existing code (workspace pre-populated with source)
+
+
 class Task(Base):
     """Task queue model"""
     __tablename__ = "tasks"
@@ -42,6 +48,16 @@ class Task(Base):
         ),
         default=TaskPriority.RANDOM,
         nullable=False,
+    )
+    task_type = Column(
+        SQLEnum(
+            TaskType,
+            native_enum=False,
+            validate_strings=True,
+            create_constraint=False,
+        ),
+        default=TaskType.NEW,
+        nullable=True,  # Nullable for backwards compatibility
     )
     status = Column(SQLEnum(TaskStatus), default=TaskStatus.PENDING, nullable=False)
 
@@ -66,7 +82,7 @@ class Task(Base):
     project_name = Column(String(255), nullable=True)  # Human-readable project name
 
     def __repr__(self):
-        return f"<Task(id={self.id}, priority={self.priority}, status={self.status})>"
+        return f"<Task(id={self.id}, type={self.task_type}, priority={self.priority}, status={self.status})>"
 
     # Define indexes for query optimization
     __table_args__ = (
@@ -74,6 +90,7 @@ class Task(Base):
         Index('ix_task_status', 'status'),
         Index('ix_task_project_id', 'project_id'),
         Index('ix_task_created_at', 'created_at'),
+        Index('ix_task_type', 'task_type'),
 
         # Composite indexes for common query patterns
         # Optimizes get_projects() and project-specific queries
@@ -81,6 +98,9 @@ class Task(Base):
 
         # Optimizes get_pending_tasks() with status filter + created_at ordering
         Index('ix_task_status_created', 'status', 'created_at'),
+
+        # Optimizes filtering by task type and status
+        Index('ix_task_type_status', 'task_type', 'status'),
     )
 
 
@@ -135,6 +155,21 @@ class UsageMetric(Base):
         return f"<UsageMetric(id={self.id}, task_id={self.task_id}, cost=${self.total_cost_usd})>"
 
 
+class GenerationHistory(Base):
+    """Track auto-generated tasks and their originating prompt archetype."""
+    __tablename__ = "generation_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(Integer, nullable=False)  # Reference to created Task
+    source = Column(String(50), nullable=False)  # Prompt name or generation source label
+    usage_percent_at_generation = Column(Integer, nullable=False)  # Budget usage % when generated
+    source_metadata = Column(Text, nullable=True)  # JSON with source-specific info
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    def __repr__(self):
+        return f"<GenerationHistory(task_id={self.task_id}, source={self.source})>"
+
+
 class TaskPool(Base):
     """Predefined pool of tasks for auto-generation"""
     __tablename__ = "task_pool"
@@ -151,28 +186,13 @@ class TaskPool(Base):
         default=TaskPriority.RANDOM,
         nullable=False,
     )
-    category = Column(String(100), nullable=True)  # e.g., "refactor", "optimization", "testing"
-    used = Column(Integer, default=0, nullable=False)  # How many times used
-    project_id = Column(String(255), nullable=True)  # Optional project association
+    category = Column(String(100), nullable=True)
+    used = Column(Integer, default=0, nullable=False)
+    project_id = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     def __repr__(self):
         return f"<TaskPool(id={self.id}, priority={self.priority}, category={self.category})>"
-
-
-class GenerationHistory(Base):
-    """Track auto-generated tasks and their sources"""
-    __tablename__ = "generation_history"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    task_id = Column(Integer, nullable=False)  # Reference to created Task
-    source = Column(String(50), nullable=False)  # "pool", "code", "ai", "backlog"
-    usage_percent_at_generation = Column(Integer, nullable=False)  # Budget usage % when generated
-    source_metadata = Column(Text, nullable=True)  # JSON with source-specific info
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-
-    def __repr__(self):
-        return f"<GenerationHistory(task_id={self.task_id}, source={self.source})>"
 
 
 def init_db(db_path: str) -> Session:
