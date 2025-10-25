@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from sleepless_agent.monitoring.logging import get_logger
 
@@ -9,7 +9,9 @@ from sleepless_agent.core.queue import TaskQueue
 from sleepless_agent.monitoring.monitor import HealthMonitor, PerformanceLogger
 from sleepless_agent.monitoring.report_generator import ReportGenerator, TaskMetrics
 from sleepless_agent.core.executor import ClaudeCodeExecutor
-from sleepless_agent.interfaces.bot import SlackBot
+
+if TYPE_CHECKING:
+    from sleepless_agent.interfaces.bot import SlackBot
 
 logger = get_logger(__name__)
 
@@ -26,7 +28,7 @@ class TaskTimeoutManager:
         monitor: HealthMonitor,
         perf_logger: PerformanceLogger,
         report_generator: ReportGenerator,
-        bot: Optional[SlackBot],
+        bot: Optional["SlackBot"],
         live_status_tracker,
     ):
         self.config = config

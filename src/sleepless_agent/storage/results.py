@@ -101,36 +101,6 @@ class ResultManager(SQLiteStore):
 
         return self._run_read(_op)
 
-    def save_result_file(self, task_id: int, filename: str, content: str) -> None:
-        """Save result output to a file on disk."""
-        task_dir = self.results_path / f"task_{task_id}"
-        task_dir.mkdir(parents=True, exist_ok=True)
-        file_path = task_dir / filename
-        file_path.write_text(content)
-        logger.info(f"Result file saved: {file_path}")
-
-    def get_result_files(self, task_id: int) -> list[Path]:
-        """Return all result files for a task."""
-        task_dir = self.results_path / f"task_{task_id}"
-        if not task_dir.exists():
-            return []
-        return list(task_dir.glob("*"))
-
-    def cleanup_result_files(self, task_id: int, keep_days: int = 30) -> None:
-        """Remove result files older than keep_days."""
-        task_dir = self.results_path / f"task_{task_id}"
-        if not task_dir.exists():
-            return
-
-        import time
-
-        now = time.time()
-        for file_path in task_dir.glob("*"):
-            age_days = (now - file_path.stat().st_mtime) / 86400
-            if age_days > keep_days:
-                file_path.unlink()
-                logger.info(f"Deleted old result file: {file_path}")
-
     def update_result_commit_info(
         self,
         result_id: int,

@@ -5,7 +5,7 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, List, Optional, Set
+from typing import Iterable, List, Optional, Set, TYPE_CHECKING
 
 from sleepless_agent.monitoring.logging import get_logger
 
@@ -17,8 +17,10 @@ from sleepless_agent.monitoring.monitor import HealthMonitor, PerformanceLogger
 from sleepless_agent.storage.git import GitManager
 from sleepless_agent.storage.results import ResultManager
 from sleepless_agent.core.executor import ClaudeCodeExecutor
-from sleepless_agent.interfaces.bot import SlackBot
 from sleepless_agent.utils.exceptions import PauseException
+
+if TYPE_CHECKING:
+    from sleepless_agent.interfaces.bot import SlackBot
 
 logger = get_logger(__name__)
 
@@ -55,13 +57,17 @@ class TaskRuntime:
 
     async def execute(self, task) -> None:
         """Execute a single task asynchronously."""
-        task_log = logger.bind(
-            component="daemon",
-            task_id=task.id,
-            priority=task.priority.value if task.priority else "unknown",
-            project_id=task.project_id,
-            project_name=task.project_name,
-        )
+        # Build context dict with only non-None values to reduce log noise
+        context = {
+            "task_id": task.id,
+            "priority": task.priority.value if task.priority else "unknown",
+        }
+        if task.project_id:
+            context["project_id"] = task.project_id
+        if task.project_name:
+            context["project_name"] = task.project_name
+
+        task_log = logger.bind(**context)
 
         self.task_queue.mark_in_progress(task.id)
 
@@ -93,7 +99,8 @@ class TaskRuntime:
             files_modified = sorted(files_modified) if files_modified else []
             commands_executed = commands_executed or []
 
-            task_log.info(
+            # Log detailed metrics at DEBUG level to reduce noise
+            task_log.debug(
                 "task.executor.done",
                 exit_code=exit_code,
                 duration_s=processing_time,
@@ -119,7 +126,8 @@ class TaskRuntime:
                 workspace_path=str(workspace),
             )
 
-            task_log.info(
+            # Move to DEBUG - result saving is an internal detail
+            task_log.debug(
                 "task.result.saved",
                 result_id=result.id,
                 files=len(files_modified),
@@ -242,10 +250,11 @@ class TaskRuntime:
                     files=commit_targets,
                     message=commit_message,
                 )
+                # Keep at INFO but simplify - git commits are important
                 task_log.info(
                     "task.git.commit",
                     branch=git_branch,
-                    commit=commit_sha,
+                    commit=commit_sha[:8] if commit_sha else None,  # Short commit hash
                     files=len(commit_targets),
                 )
                 return commit_sha

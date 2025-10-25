@@ -65,24 +65,27 @@ class SleeplessAgent:
 
         self.scheduler = SmartScheduler(
             task_queue=self.task_queue,
-            max_parallel_tasks=self.config.agent.max_parallel_tasks,
             daily_budget_usd=10.0,
             night_quota_percent=90.0,
-            use_live_usage_check=self.config.multi_agent_workflow.pro_plan_monitoring.enabled,
-            usage_command=self.config.multi_agent_workflow.pro_plan_monitoring.usage_command,
-            pause_threshold_percent=self.config.multi_agent_workflow.pro_plan_monitoring.pause_threshold,
+            usage_command=self.config.claude_code.usage_command,
+            pause_threshold_day=self.config.claude_code.pause_threshold_day,
+            pause_threshold_night=self.config.claude_code.pause_threshold_night,
         )
 
         self.auto_generator = AutoTaskGenerator(
             db_session=self.db_session,
             config=self.config.auto_generation,
             budget_manager=self.budget_manager,
+            default_model=self.config.claude_code.model,
+            usage_command=self.config.claude_code.usage_command,
+            pause_threshold_day=self.config.claude_code.pause_threshold_day,
+            pause_threshold_night=self.config.claude_code.pause_threshold_night,
         )
 
         self.claude = ClaudeCodeExecutor(
             workspace_root=str(self.config.agent.workspace_root),
-            default_timeout=self.config.claude_code.default_timeout,
             live_status_tracker=self.live_status_tracker,
+            default_model=self.config.claude_code.model,
         )
 
         self.results = ResultManager(

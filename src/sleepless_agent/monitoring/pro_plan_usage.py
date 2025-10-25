@@ -144,15 +144,39 @@ class ProPlanUsageChecker:
             else:
                 reset_label = "unknown"
 
+            # Only log if usage changed by >=5% or reset time changed significantly
+            # This reduces log noise from small fluctuations
             previous_snapshot = self._last_logged_usage
-            if previous_snapshot != (usage_percent, reset_time):
+            should_log = False
+
+            if previous_snapshot is None:
+                # On first check, only log if usage is already significant (>=50%)
+                # This avoids startup noise when usage is low
+                if usage_percent >= 50.0:
+                    should_log = True
+                # Always cache it even if not logging
+                self._last_logged_usage = (usage_percent, reset_time)
+            else:
+                prev_percent, prev_reset = previous_snapshot
+                percent_change = abs(usage_percent - prev_percent)
+                reset_changed = reset_time != prev_reset
+
+                # Log if usage changed by >=5% OR if we're near threshold (every % counts)
+                if percent_change >= 5.0 or usage_percent >= 80.0:
+                    should_log = True
+                # Also log if reset time changed (new day/period)
+                elif reset_changed and prev_reset and reset_time:
+                    # Only if the reset time jumped significantly (new reset period)
+                    should_log = True
+
+                if should_log:
+                    self._last_logged_usage = (usage_percent, reset_time)
+
+            if should_log:
                 logger.info(
                     "usage.snapshot",
                     usage_percent=usage_percent,
-                    reset_at=reset_time.isoformat() if reset_time else None,
-                    reset_label=reset_label,
                 )
-                self._last_logged_usage = (usage_percent, reset_time)
 
             return usage_percent, reset_time
 
