@@ -1,0 +1,261 @@
+# MkDocs Configuration for Sleepless Agent
+
+# Project information
+site_name: Sleepless Agent Documentation
+site_description: 24/7 AI agent that works while you sleep
+site_author: Sleepless Agent Team
+site_url: https://docs.sleepless-agent.dev
+repo_url: https://github.com/context-machine-lab/sleepless-agent
+repo_name: sleepless-agent
+edit_uri: edit/main/docs/
+
+# Copyright
+copyright: Copyright &copy; 2024 Sleepless Agent Team
+
+# Theme configuration
+theme:
+  name: material
+  language: en
+
+  # Color scheme
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: purple
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: purple
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+  # Font
+  font:
+    text: Inter
+    code: JetBrains Mono
+
+  # Features
+  features:
+    - announce.dismiss
+    - content.action.edit
+    - content.action.view
+    - content.code.annotate
+    - content.code.copy
+    - content.code.select
+    - content.tabs.link
+    - content.tooltips
+    - header.autohide
+    - navigation.expand
+    - navigation.footer
+    - navigation.indexes
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.instant.progress
+    - navigation.path
+    - navigation.prune
+    - navigation.sections
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.share
+    - search.suggest
+    - toc.follow
+    - toc.integrate
+
+  # Icons
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/robot-industrial
+
+# Navigation
+nav:
+  - Home:
+    - index.md
+    - Quickstart: quickstart.md
+    - Installation: installation.md
+    - FAQ: faq.md
+    - Troubleshooting: troubleshooting.md
+    - Changelog: changelog.md
+
+  - Concepts:
+    - concepts/index.md
+    - Architecture: concepts/architecture.md
+    - Task Lifecycle: concepts/task-lifecycle.md
+    - Workspace Isolation: concepts/workspace-isolation.md
+    - Scheduling: concepts/scheduling.md
+    - Pro Plan Management: concepts/pro-plan-management.md
+
+  - Guides:
+    - guides/index.md
+    - Slack Setup: guides/slack-setup.md
+    - Environment Setup: guides/environment-setup.md
+    - Git Integration: guides/git-integration.md
+    - Project Management: guides/project-management.md
+    - Custom Prompts: guides/custom-prompts.md
+    - Deployment: guides/deployment.md
+
+  - Tutorials:
+    - tutorials/index.md
+    - First Task: tutorials/first-task.md
+    - Slack Workflows: tutorials/slack-workflows.md
+    - Monitoring Tasks: tutorials/monitoring-tasks.md
+    - Daily Reports: tutorials/daily-reports.md
+    - Workspace Management: tutorials/workspace-management.md
+
+  - Reference:
+    - reference/index.md
+    - API:
+      - CLI Commands: reference/api/cli-commands.md
+      - Slack Commands: reference/api/slack-commands.md
+      - Python API: reference/api/python-api.md
+    - Configuration: reference/configuration.md
+    - Database Schema: reference/database-schema.md
+    - Environment Variables: reference/environment-variables.md
+    - Error Codes: reference/error-codes.md
+
+  - Examples:
+    - examples/index.md
+    - Basic Usage: examples/basic-usage.md
+    - Slack Integration: examples/slack-integration.md
+    - Advanced Workflows: examples/advanced-workflows.md
+    - Custom Executors: examples/custom-executors.md
+    - Monitoring Scripts: examples/monitoring-scripts.md
+
+# Plugins
+plugins:
+  - search:
+      separator: '[\s\-\_\.]+'
+      lang:
+        - en
+  - minify:
+      minify_html: true
+      minify_js: true
+      minify_css: true
+      htmlmin_opts:
+        remove_comments: true
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: iso_datetime
+
+# Markdown extensions
+markdown_extensions:
+  # Python Markdown
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - tables
+  - meta
+
+  # Python Markdown Extensions
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.critic
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      normalize_issue_symbols: true
+      repo_url_shorthand: true
+      user: context-machine-lab
+      repo: sleepless-agent
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      combine_header_slug: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+# Extra CSS (can add custom styles later)
+# extra_css:
+#   - stylesheets/extra.css
+
+# Extra JavaScript (can add scripts later)
+# extra_javascript:
+#   - javascripts/extra.js
+
+# Extra configuration
+extra:
+  # Social links
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/context-machine-lab/sleepless-agent
+      name: GitHub
+    - icon: fontawesome/brands/discord
+      link: https://discord.gg/74my3Wkn
+      name: Discord
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/sleepless-agent/
+      name: PyPI
+
+  # Version
+  version:
+    provider: mike
+    default: stable
+
+  # Analytics
+  analytics:
+    provider: google
+    property: G-XXXXXXXXXX
+    feedback:
+      title: Was this page helpful?
+      ratings:
+        - icon: material/thumb-up-outline
+          name: This page was helpful
+          data: 1
+          note: >-
+            Thanks for your feedback!
+        - icon: material/thumb-down-outline
+          name: This page could be improved
+          data: 0
+          note: >-
+            Thanks for your feedback! Help us improve by
+            <a href="https://github.com/context-machine-lab/sleepless-agent/issues/new?title=Documentation%20Feedback" target="_blank" rel="noopener">opening an issue</a>.
+
+  # Consent
+  consent:
+    title: Cookie consent
+    description: >-
+      We use cookies to recognize your repeated visits and preferences, as well
+      as to measure the effectiveness of our documentation and whether users
+      find what they're searching for. With your consent, you're helping us to
+      make our documentation better.
+    actions:
+      - accept
+      - reject
+      - manage
+
+  # Status
+  status:
+    new: Recently added
+    deprecated: Deprecated
