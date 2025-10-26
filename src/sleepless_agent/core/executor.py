@@ -240,8 +240,8 @@ class ClaudeCodeExecutor:
                 TASK_ID=task_id,
                 TASK_TITLE=task_description[:50],
                 TASK_DESCRIPTION=task_description,
-                PRIORITY="serious" if project_id else "random",
-                PRIORITY_LABEL="SERIOUS" if project_id else "RANDOM",
+                PRIORITY="serious" if project_id else "thought",
+                PRIORITY_LABEL="SERIOUS" if project_id else "THOUGHT",
                 PROJECT_NAME=project_name or "None",
                 CREATED_AT=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             )
@@ -1171,7 +1171,7 @@ Output should include:
         task_id: int,
         description: str,
         task_type: str = "general",
-        priority: str = "random",
+        priority: str = "thought",
         timeout: Optional[int] = None,
         project_id: Optional[str] = None,
         project_name: Optional[str] = None,
@@ -1183,7 +1183,7 @@ Output should include:
             task_id: Task ID
             description: Task description/prompt
             task_type: Type of task (code, research, brainstorm, etc.)
-            priority: Task priority (random or serious)
+            priority: Task priority (thought or serious)
             timeout: Timeout in seconds (not directly supported by SDK)
             project_id: Optional project ID for shared workspace
             project_name: Optional project name (for logging)

@@ -35,7 +35,7 @@ def parse_task_description(description: str) -> Tuple[str, Optional[str], Option
     if "--random" in working:
         working = working.replace("--random", "").strip()
         warning = (
-            "ℹ️ Random thoughts belong in `/think`. Treating this as a serious task."
+            "ℹ️ Thoughts belong in `/think`. Treating this as a serious task."
         )
         note = f"{note}\n{warning}" if note else warning
 

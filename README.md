@@ -314,7 +314,7 @@ SLEEPLESS_LOG_DIR=workspace/.logs
 
 The agent intelligently processes different task types:
 
-1. **Random Thoughts** - Auto-commits to `random-ideas` branch
+1. **Thoughts** - Auto-commits to `thought-ideas` branch
    ```
    /think Research async patterns in Rust
    /think What's the best way to implement caching?
@@ -425,10 +425,10 @@ launchctl list | grep sleepless
 
 ## Performance Tips
 
-1. **Use random thoughts to fill idle time** - Maximizes usage
+1. **Use thoughts to fill idle time** - Maximizes usage
 2. **Batch serious jobs** - Reduces context switching
 3. **Monitor credits** - Watch scheduler logs for window resets
-4. **Review git history** - Check `random-ideas` branch regularly
+4. **Review git history** - Check `thought-ideas` branch regularly
 5. **Check metrics** - Run `sle check` to track performance
 
 ## Security Notes

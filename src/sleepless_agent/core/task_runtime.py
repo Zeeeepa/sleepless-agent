@@ -71,6 +71,7 @@ class TaskRuntime:
 
         self.task_queue.mark_in_progress(task.id)
 
+        task_log.info("=" * 80)
         task_log.info(
             "task.start",
             description=task.description,
@@ -250,7 +251,7 @@ class TaskRuntime:
     ) -> Optional[str]:
         files_for_commit: Set[str] = set(files_modified or [])
 
-        if task.priority in (TaskPriority.RANDOM, TaskPriority.GENERATED):
+        if task.priority in (TaskPriority.THOUGHT, TaskPriority.GENERATED):
             if not files_for_commit:
                 summary_rel_path = self.git.write_summary_file(
                     workspace_path=workspace,
@@ -434,7 +435,7 @@ class TaskRuntime:
             try:
                 priority_icon = {
                     TaskPriority.SERIOUS: "🔴",
-                    TaskPriority.RANDOM: "🟡",
+                    TaskPriority.THOUGHT: "🟡",
                     TaskPriority.GENERATED: "🟢",
                 }.get(task.priority, "ℹ️")
 

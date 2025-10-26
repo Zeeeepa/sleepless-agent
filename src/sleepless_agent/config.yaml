@@ -9,7 +9,7 @@ claude_code:
 
 git:
   use_remote_repo: true
-  remote_repo_url: git@github.com:TimeLovercc/sleepless-agent.git
+  remote_repo_url: git@github.com:TimeLovercc/test1.git
   auto_create_repo: true
 
 agent:
