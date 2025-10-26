@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
 
@@ -19,10 +19,12 @@ class GitManager:
         workspace_root: str,
         default_task_branch: str = "tasks",
         main_branch: str = "main",
+        auto_create_repo: bool = False,
     ):
         self.repo_path = Path(workspace_root).resolve()
         self.default_task_branch = default_task_branch
         self.main_branch = main_branch
+        self.auto_create_repo = auto_create_repo
         self._push_warning_logged = False
 
     # ------------------------------------------------------------------
@@ -109,6 +111,20 @@ class GitManager:
         if not self._has_remote("origin"):
             logger.debug("No remote 'origin' configured; skipping push")
             return
+
+        # Auto-create GitHub repository if it doesn't exist
+        if self.auto_create_repo:
+            try:
+                remote_url = self._run_git("remote", "get-url", "origin")
+                if remote_url and not self._check_remote_exists(remote_url):
+                    logger.info("Remote repository not found, attempting to create it")
+                    if self._create_github_repo(remote_url):
+                        logger.info("Repository created successfully, proceeding with push")
+                    else:
+                        logger.warning("Failed to create repository, push may fail")
+            except Exception as exc:
+                logger.debug(f"Failed to auto-create repository: {exc}")
+
         try:
             self._run_git("push", "--all", "origin")
             if self._push_warning_logged:
@@ -182,7 +198,7 @@ class GitManager:
 
             summary_content = (
                 f"# Task #{task_id} Summary\n\n"
-                f"**When**: {datetime.utcnow().isoformat()} UTC\n"
+                f"**When**: {datetime.now(timezone.utc).replace(tzinfo=None).isoformat()} UTC\n"
                 f"**Priority**: {priority}\n"
                 f"**Description**: {description}\n\n"
                 f"## Output\n\n{truncated_output}\n"
@@ -362,6 +378,62 @@ class GitManager:
             remotes = self._run_git("remote")
             return name in remotes.splitlines()
         except Exception:
+            return False
+
+    def _check_remote_exists(self, remote_url: str) -> bool:
+        """Check if GitHub repository exists using gh CLI."""
+        try:
+            # Extract repo from URL (e.g., git@github.com:user/repo.git -> user/repo)
+            if "@github.com:" in remote_url:
+                repo = remote_url.split(":")[-1].replace(".git", "")
+            elif "github.com/" in remote_url:
+                repo = remote_url.split("github.com/")[-1].replace(".git", "")
+            else:
+                logger.debug(f"Non-GitHub URL, skipping repo check: {remote_url}")
+                return True
+
+            result = subprocess.run(
+                ["gh", "repo", "view", repo],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            return result.returncode == 0
+        except Exception as exc:
+            logger.debug(f"Failed to check if remote exists: {exc}")
+            return True
+
+    def _create_github_repo(self, remote_url: str) -> bool:
+        """Create GitHub repository using gh CLI."""
+        try:
+            # Extract repo from URL
+            if "@github.com:" in remote_url:
+                repo = remote_url.split(":")[-1].replace(".git", "")
+            elif "github.com/" in remote_url:
+                repo = remote_url.split("github.com/")[-1].replace(".git", "")
+            else:
+                logger.warning(f"Cannot create non-GitHub repo: {remote_url}")
+                return False
+
+            # Get repo name (last part)
+            repo_name = repo.split("/")[-1]
+
+            logger.info(f"Creating GitHub repository: {repo}")
+            result = subprocess.run(
+                ["gh", "repo", "create", repo, "--private", "--source", str(self.repo_path)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            if result.returncode == 0:
+                logger.info(f"Successfully created GitHub repository: {repo}")
+                return True
+            else:
+                logger.error(f"Failed to create GitHub repository: {result.stderr}")
+                return False
+        except Exception as exc:
+            logger.error(f"Failed to create GitHub repository: {exc}")
             return False
 
     def _normalize_files(self, workspace_path: Path, files: Iterable[str]) -> List[str]:

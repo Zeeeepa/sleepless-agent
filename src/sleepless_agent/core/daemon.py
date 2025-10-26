@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import signal
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy.orm import sessionmaker
@@ -99,7 +99,11 @@ class SleeplessAgent:
             str(self.config.agent.results_path),
         )
 
-        self.git = GitManager(workspace_root=str(self.config.agent.workspace_root))
+        auto_create_repo = git_config.get("auto_create_repo", False) if git_config else False
+        self.git = GitManager(
+            workspace_root=str(self.config.agent.workspace_root),
+            auto_create_repo=auto_create_repo,
+        )
         self.git.init_repo()
         if self.use_remote_repo and self.remote_repo_url:
             try:
@@ -210,7 +214,13 @@ class SleeplessAgent:
         logger.info("Sleepless Agent starting...")
 
         try:
-            self.bot.start()
+            # Start bot in background thread to avoid blocking the async event loop
+            # The Slack SDK's connect() is synchronous and would block forever
+            import threading
+            bot_thread = threading.Thread(target=self.bot.start, daemon=True, name="SlackBot")
+            bot_thread.start()
+            await asyncio.sleep(0.5)  # Give bot time to initialize
+            logger.info("Slack bot started in background thread")
         except Exception as exc:
             logger.error(f"Failed to start bot: {exc}")
             return
@@ -259,13 +269,12 @@ class SleeplessAgent:
                     break
 
                 await self.task_runtime.execute(task)
-                self.scheduler.log_task_execution(task.id)
                 await asyncio.sleep(1)
         except Exception as exc:
             logger.error(f"Error in task processing loop: {exc}")
 
     def _check_and_summarize_daily_reports(self) -> None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         end_of_day = now.replace(hour=23, minute=59, second=0, microsecond=0)
 
         if self.last_daily_summarization is None or self.last_daily_summarization.date() != now.date():

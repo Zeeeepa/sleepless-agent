@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Sequence
 
 from sleepless_agent.monitoring.logging import get_logger
@@ -91,7 +91,7 @@ def ensure_refinement_task(
     context = {
         "generated_by": "refinement",
         REFINEMENT_CONTEXT_KEY: parent_id,
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
     }
 
     refinement_task = task_queue.add_task(
@@ -118,7 +118,7 @@ def ensure_refinement_task(
 
 def find_recent_completed_tasks(session: Session, hours: int = 24) -> list[Task]:
     """Return recently completed tasks that may need refinement."""
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
     tasks = (
         session.query(Task)
         .filter(

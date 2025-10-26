@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, TYPE_CHECKING
 
 from sleepless_agent.monitoring.logging import get_logger
@@ -49,7 +49,7 @@ class TaskTimeoutManager:
         if not timed_out_tasks:
             return
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         for task in timed_out_tasks:
             elapsed_seconds = self._compute_elapsed(task, now, timeout_seconds)
             timeout_message = task.error_message or f"Timed out after {elapsed_seconds // 60} minutes."

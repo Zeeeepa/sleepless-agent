@@ -1,5 +1,5 @@
 """Daily report generation system - append-only updates with end-of-day summarization"""
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, List
 from dataclasses import dataclass
@@ -49,14 +49,14 @@ class ReportGenerator:
         """
         if project_id:
             task_metrics.project_id = project_id
-        timestamp = task_metrics.timestamp or datetime.utcnow().isoformat()
+        timestamp = task_metrics.timestamp or datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         self._append_to_daily_report(task_metrics, timestamp)
         if task_metrics.project_id:
             self._append_to_project_report(task_metrics, timestamp)
 
     def _append_to_daily_report(self, task_metrics: TaskMetrics, timestamp: str):
         """Append entry to today's daily report"""
-        today = datetime.utcnow().strftime("%Y-%m-%d")
+        today = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d")
         report_file = self.base_path / f"{today}.md"
 
         # Ensure header exists
@@ -127,7 +127,7 @@ class ReportGenerator:
             date: Report date in YYYY-MM-DD format (default: today)
         """
         if not date:
-            date = datetime.utcnow().strftime("%Y-%m-%d")
+            date = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d")
 
         report_file = self.daily_dir / f"{date}.md"
         if not report_file.exists():
@@ -261,7 +261,7 @@ class ReportGenerator:
         formatted_date = date_obj.strftime("%A, %B %d, %Y")
 
         header = f"# Daily Report - {formatted_date}\n\n"
-        header += f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
+        header += f"Generated: {datetime.now(timezone.utc).replace(tzinfo=None).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
         header += "## Tasks\n\n"
         header += "## Summary\n\n"
         report_file.write_text(header)
@@ -269,7 +269,7 @@ class ReportGenerator:
 
     def get_daily_report_path(self, date: Optional[datetime] = None) -> Path:
         """Return the filesystem path for the daily report."""
-        target_date = (date or datetime.utcnow()).strftime("%Y-%m-%d")
+        target_date = (date or datetime.now(timezone.utc).replace(tzinfo=None)).strftime("%Y-%m-%d")
         return self.base_path / f"{target_date}.md"
 
     def get_daily_report(self, date: Optional[str] = None) -> str:
@@ -282,11 +282,26 @@ class ReportGenerator:
             Report content as markdown string
         """
         if not date:
-            date = datetime.utcnow().strftime("%Y-%m-%d")
+            date = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d")
 
         report_file = self.base_path / f"{date}.md"
         if not report_file.exists():
             return f"No report found for {date}"
+
+        return report_file.read_text()
+
+    def get_project_report(self, project_id: str) -> str:
+        """Get project report content
+
+        Args:
+            project_id: Project identifier
+
+        Returns:
+            Report content as markdown string
+        """
+        report_file = self.projects_dir / f"{project_id}.md"
+        if not report_file.exists():
+            return f"No report found for project: {project_id}"
 
         return report_file.read_text()
 
@@ -309,7 +324,7 @@ class ReportGenerator:
         Args:
             days: Days to keep (default: 30)
         """
-        cutoff = datetime.utcnow().toordinal() - days
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None).toordinal() - days
 
         for report_file in self.base_path.glob("*.md"):
             try:
@@ -338,7 +353,7 @@ class ReportGenerator:
         if report_file.exists():
             return
         header = f"# Project Report - {project_id}\n\n"
-        header += f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
+        header += f"Generated: {datetime.now(timezone.utc).replace(tzinfo=None).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
         header += "## Tasks\n\n"
         header += "## Summary\n\n"
         report_file.write_text(header)

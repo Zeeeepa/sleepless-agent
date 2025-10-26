@@ -3,13 +3,14 @@ claude_code:
   model: claude-sonnet-4-5-20250929
   night_start_hour: 1
   night_end_hour: 9
-  threshold_day: 100.0
-  threshold_night: 100.0
+  threshold_day: 20.0
+  threshold_night: 80.0
   usage_command: claude /usage
 
 git:
   use_remote_repo: true
   remote_repo_url: git@github.com:TimeLovercc/sleepless-agent.git
+  auto_create_repo: true
 
 agent:
   workspace_root: ./workspace
@@ -29,33 +30,82 @@ multi_agent_workflow:
 auto_generation:
   enabled: true
   prompts:
-    - name: default_improvement
+    - name: refine_focused
       prompt: |-
-        You are a software development assistant. Generate ONE specific, actionable improvement idea for a Generic Python project.
+        The workspace has multiple ongoing projects and tasks that need attention.
 
-        Generate task ideas in categories like:
-        - Code quality (refactoring, optimization, testing)
-        - Documentation (docstrings, README, examples)
-        - Features (new functionality, enhancements)
-        - Architecture (design improvements, modularity)
-        - Performance (caching, algorithms, database queries)
-        - Security (input validation, authentication, encryption)
+        ## Current State
+        - Active tasks: {task_count} ({pending_count} pending, {in_progress_count} in progress)
+        - Many tasks are already in progress or pending
 
-        IMPORTANT: Classify the task type and prefix your response with [NEW] or [REFINE].
-        Respond with the type prefix followed by a single task description in 1-2 sentences.
-      weight: 0.7
-    - name: bug_fix_maintenance
+        ## Recent Work & Context
+        {recent_work}
+
+        ## Task Generation
+        Generate ONE REFINE task to continue or improve existing work:
+        - Complete partial/incomplete tasks mentioned above
+        - Follow up on outstanding items and recommendations
+        - Enhance or improve existing projects in the workspace
+        - Fix issues or improve quality of current work
+        - Add missing components to existing implementations
+        - Expand documentation or analysis from previous tasks
+
+        IMPORTANT: Your response MUST start with [REFINE] followed by a specific, actionable task description in 1-2 sentences.
+
+        Focus on completing or improving what already exists in the workspace rather than starting new projects.
+      weight: 0.45
+    - name: balanced
       prompt: |-
-        You are a software development assistant. Generate ONE specific bug fix or maintenance task for a Generic Python project.
+        Review the workspace state and generate a valuable task.
 
-        Focus on areas like:
-        - Bug fixes (edge cases, error handling, race conditions)
-        - Technical debt (outdated dependencies, deprecated APIs)
-        - Code maintenance (cleanup, refactoring for clarity)
-        - Robustness (input validation, error recovery)
-        - Edge case handling (boundary conditions, null checks)
+        ## Current State
+        - Active tasks: {task_count} ({pending_count} pending, {in_progress_count} in progress)
 
-        IMPORTANT: Classify the task type and prefix your response with [NEW] or [REFINE].
-        Respond with the type prefix followed by a single task description in 1-2 sentences.
-      weight: 0.3
+        ## Recent Work & Context
+        {recent_work}
+
+        ## Task Generation
+        Generate ONE valuable task (NEW or REFINE):
+        - For REFINE: improve existing work, complete partial tasks, enhance current projects
+        - For NEW: create something useful, interesting, or educational
+
+        Task categories to consider:
+        - Software development (applications, scripts, tools, APIs)
+        - Data analysis and visualization projects
+        - Research and documentation (technical guides, comparisons, best practices)
+        - Creative writing (stories, tutorials, technical articles)
+        - System design and architecture documents
+        - Educational content and examples
+        - Automation and productivity improvements
+        - Analysis and evaluation reports
+
+        IMPORTANT: Prefix your response with [NEW] or [REFINE] followed by a specific, actionable task description in 1-2 sentences.
+      weight: 0.35
+    - name: new_friendly
+      prompt: |-
+        Generate an interesting and valuable task for the workspace.
+
+        ## Current State
+        - Active tasks: {task_count} ({pending_count} pending, {in_progress_count} in progress)
+        - Few tasks in queue - good time for new projects!
+
+        ## Task Generation
+        Generate ONE innovative task that creates value.
+
+        Areas to explore:
+        - Build practical tools and utilities
+        - Create educational content and tutorials
+        - Develop software applications or scripts
+        - Write comprehensive documentation or guides
+        - Design systems and architectures
+        - Analyze and compare technologies or approaches
+        - Generate creative content (technical writing, examples)
+        - Research and summarize complex topics
+        - Create data visualizations or analysis
+        - Develop proof-of-concepts or experiments
+
+        Can be NEW (fresh project) or REFINE (improve existing work) - choose what would be most valuable.
+
+        IMPORTANT: Prefix your response with [NEW] or [REFINE] followed by a specific, actionable task description in 1-2 sentences.
+      weight: 0.20
 

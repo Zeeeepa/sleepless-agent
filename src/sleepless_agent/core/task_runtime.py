@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, List, Optional, Set, TYPE_CHECKING
 
@@ -92,6 +92,7 @@ class TaskRuntime:
                 commands_executed,
                 exit_code,
                 usage_metrics,
+                eval_status,
             ) = await self._run_task_with_timeout(task)
 
             processing_time = int(time.time() - start_time)
@@ -106,6 +107,7 @@ class TaskRuntime:
                 duration_s=processing_time,
                 total_cost_usd=usage_metrics.get("total_cost_usd"),
                 turns=usage_metrics.get("num_turns"),
+                eval_status=eval_status,
             )
 
             if exit_code != 0:
@@ -157,23 +159,41 @@ class TaskRuntime:
             else:
                 task_log.warning("task.git.skipped", reason="workspace_missing")
 
-            self.task_queue.mark_completed(task.id, result_id=result.id)
-            self._log_success_metrics(
-                task=task,
-                processing_time=processing_time,
-                files_modified=files_modified,
-                commands_executed=commands_executed,
-                git_commit_sha=git_commit_sha,
-                git_pr_url=git_pr_url,
-                usage_metrics=usage_metrics,
-                result_output=result_output,
-            )
-            task_log.info(
-                "task.complete",
-                status="completed",
-                duration_s=processing_time,
-                git_commit=git_commit_sha,
-            )
+            # Check evaluator status before marking as completed
+            # Only mark as completed if evaluator says COMPLETE, or if evaluator is disabled
+            if eval_status and eval_status.upper() in ["INCOMPLETE", "FAILED"]:
+                task_log.warning(
+                    "task.evaluator_incomplete",
+                    eval_status=eval_status,
+                    message="Task marked as failed due to evaluator status"
+                )
+                self.task_queue.mark_failed(task.id, f"Evaluator status: {eval_status}")
+                self._log_failure_metrics(task=task, duration=processing_time, error=f"Evaluator: {eval_status}")
+                task_log.info(
+                    "task.complete",
+                    status="failed",
+                    duration_s=processing_time,
+                    eval_status=eval_status,
+                )
+            else:
+                self.task_queue.mark_completed(task.id, result_id=result.id)
+                self._log_success_metrics(
+                    task=task,
+                    processing_time=processing_time,
+                    files_modified=files_modified,
+                    commands_executed=commands_executed,
+                    git_commit_sha=git_commit_sha,
+                    git_pr_url=git_pr_url,
+                    usage_metrics=usage_metrics,
+                    result_output=result_output,
+                )
+                task_log.info(
+                    "task.complete",
+                    status="completed",
+                    duration_s=processing_time,
+                    git_commit=git_commit_sha,
+                    eval_status=eval_status,
+                )
         except PauseException as pause:
             await self._handle_pause_exception(
                 task=task,
@@ -529,7 +549,7 @@ class TaskRuntime:
 
         sleep_seconds = 0.0
         if pause.reset_time:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             sleep_seconds = max(0.0, (pause.reset_time - now).total_seconds())
             task_log.info("task.pause.reset_time", reset_at=reset_time_iso)
         else:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Iterable, List, Optional
@@ -14,7 +14,7 @@ logger = get_logger(__name__)
 
 
 def _utc_now_iso() -> str:
-    return datetime.utcnow().isoformat()
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
 
 def _truncate(text: str, max_length: int = 240) -> str:
@@ -112,7 +112,7 @@ class LiveStatusTracker:
 
     def prune_older_than(self, max_age: timedelta) -> None:
         """Drop entries older than the provided age."""
-        cutoff = datetime.utcnow() - max_age
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - max_age
         with self._lock:
             data = self._read_all()
             changed = False

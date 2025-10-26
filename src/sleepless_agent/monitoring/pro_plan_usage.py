@@ -78,7 +78,7 @@ class ProPlanUsageChecker:
         try:
             # Check cache first (valid for 60 seconds)
             if self.cached_usage and self.last_check_time:
-                cache_age = (datetime.utcnow() - self.last_check_time).total_seconds()
+                cache_age = (datetime.now(timezone.utc).replace(tzinfo=None) - self.last_check_time).total_seconds()
                 if cache_age < self.cache_duration_seconds:
                     logger.debug(
                         "usage.cache.hit",
@@ -128,7 +128,7 @@ class ProPlanUsageChecker:
 
             # Cache result
             self.cached_usage = (usage_percent, reset_time)
-            self.last_check_time = datetime.utcnow()
+            self.last_check_time = datetime.now(timezone.utc).replace(tzinfo=None)
 
             # Format reset time with timezone info if available
             if reset_time:
@@ -444,7 +444,7 @@ class ProPlanUsageChecker:
         Returns:
             datetime of reset, or None if can't parse
         """
-        now_utc = datetime.utcnow()
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
         # Try: "Resets 2:59am (America/New_York)" or "Resets 7pm (America/New_York)"
         match = re.search(
@@ -624,7 +624,7 @@ class ProPlanUsageChecker:
         *,
         now_utc: Optional[datetime] = None,
     ) -> datetime:
-        reference = now_utc or datetime.utcnow()
+        reference = now_utc or datetime.now(timezone.utc).replace(tzinfo=None)
         candidate = reference.replace(hour=hour % 24, minute=minute, second=second, microsecond=0)
         if candidate <= reference:
             candidate += timedelta(days=1)
@@ -667,6 +667,6 @@ class ProPlanUsageChecker:
 
         fallback = (0.0, None)
         self.cached_usage = fallback
-        self.last_check_time = datetime.utcnow()
+        self.last_check_time = datetime.now(timezone.utc).replace(tzinfo=None)
         logger.info("usage.fallback.default")
         return fallback

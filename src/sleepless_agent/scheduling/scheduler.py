@@ -45,7 +45,7 @@ class BudgetManager:
     ) -> Decimal:
         """Get total usage in USD for a time period"""
         if end_time is None:
-            end_time = datetime.utcnow()
+            end_time = datetime.now(timezone.utc).replace(tzinfo=None)
 
         metrics = (
             self.session.query(UsageMetric)
@@ -72,12 +72,12 @@ class BudgetManager:
 
     def get_today_usage(self) -> Decimal:
         """Get total usage for today (UTC midnight to now)"""
-        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = datetime.now(timezone.utc).replace(tzinfo=None).replace(hour=0, minute=0, second=0, microsecond=0)
         return self.get_usage_in_period(today_start)
 
     def get_current_time_period_usage(self) -> Decimal:
         """Get usage for current time period (night or day)"""
-        period_start = current_period_start(datetime.utcnow())
+        period_start = current_period_start(datetime.now(timezone.utc).replace(tzinfo=None))
         return self.get_usage_in_period(period_start)
 
     def get_current_quota(self) -> Decimal:
@@ -157,7 +157,7 @@ class CreditWindow:
             end_time: Window end time (default: start_time + 5 hours)
         """
         if start_time is None:
-            start_time = datetime.utcnow()
+            start_time = datetime.now(timezone.utc).replace(tzinfo=None)
 
         self.start_time = start_time
 
@@ -171,11 +171,11 @@ class CreditWindow:
 
     def is_active(self) -> bool:
         """Check if window is still active"""
-        return datetime.utcnow() < self.end_time
+        return datetime.now(timezone.utc).replace(tzinfo=None) < self.end_time
 
     def time_remaining_minutes(self) -> int:
         """Get minutes remaining in window"""
-        remaining = (self.end_time - datetime.utcnow()).total_seconds() / 60
+        remaining = (self.end_time - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds() / 60
         return max(0, int(remaining))
 
     def __repr__(self):
@@ -250,7 +250,7 @@ class SmartScheduler:
 
     def _init_current_window(self):
         """Initialize current credit window"""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         # Check if we need a new window
         if not self.current_window or not self.current_window.is_active():
@@ -277,7 +277,7 @@ class SmartScheduler:
         Returns:
             Tuple of (should_schedule: bool, context: dict)
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         # Check if we're in a pause window
         if self.usage_pause_until:
@@ -367,7 +367,7 @@ class SmartScheduler:
         """Return remaining pause duration in seconds if scheduling is halted."""
         if not self.usage_pause_until:
             return None
-        remaining = (self.usage_pause_until - datetime.utcnow()).total_seconds()
+        remaining = (self.usage_pause_until - datetime.now(timezone.utc).replace(tzinfo=None)).total_seconds()
         return remaining if remaining > 0 else None
 
     def get_next_tasks(self) -> List[Task]:
@@ -378,7 +378,7 @@ class SmartScheduler:
         should_schedule, context = self._check_scheduling_allowed()
 
         if not should_schedule:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             event = context.pop("event", "scheduler.pause")
             reason = context.get("reason")
             should_log = True
@@ -607,7 +607,7 @@ class SmartScheduler:
             score += 10
 
         # Age bonus (older tasks get higher score)
-        age_minutes = (datetime.utcnow() - task.created_at).total_seconds() / 60
+        age_minutes = (datetime.now(timezone.utc).replace(tzinfo=None) - task.created_at).total_seconds() / 60
         score += age_minutes * 0.1
 
         # Retry penalty (don't keep retrying failed tasks)
@@ -634,19 +634,3 @@ class SmartScheduler:
             },
         ]
 
-    def log_task_execution(self, task_id: int):
-        """Log task execution for credit tracking"""
-        if self.current_window:
-            self.current_window.tasks_executed += 1
-            logger.info(
-                f"Task {task_id} executed. Window: {self.current_window.tasks_executed} "
-                f"tasks, {self.current_window.time_remaining_minutes()}m left"
-            )
-
-    def get_window_summary(self) -> str:
-        """Get human-readable window summary"""
-        self._init_current_window()
-        return (
-            f"Credit Window: {self.current_window.tasks_executed} tasks executed, "
-            f"{self.current_window.time_remaining_minutes()} minutes remaining"
-        )
