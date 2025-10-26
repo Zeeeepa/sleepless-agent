@@ -96,9 +96,8 @@ class SlackBot:
 
         logger.info(f"Slash command: {command} {text} from {user}")
 
-        if command == "/task":
-            self.handle_task_command(text, user, channel, response_url)
-        elif command == "/think":
+        if command == "/task" or command == "/think":
+            # Both commands now use unified handler with dynamic priority
             self.handle_think_command(text, user, channel, response_url)
         elif command == "/check":
             self.handle_check_command(response_url)
@@ -111,19 +110,22 @@ class SlackBot:
         else:
             self.send_response(response_url, f"Unknown command: {command}")
 
-    def handle_task_command(
+    def handle_think_command(
         self,
         args: str,
         user_id: str,
         channel_id: str,
         response_url: str,
     ):
-        """Handle /task command for serious work
+        """Handle /think command - unified handler for both tasks and thoughts
 
-        Usage: /task <description> [--project=<project_name>]
+        Usage: /think <description> [--project=<project_name>]
+
+        With --project: Creates SERIOUS priority project task
+        Without --project: Creates THOUGHT priority one-time task
         """
         if not args:
-            self.send_response(response_url, "Usage: /task <description> [--project=<project_name>]")
+            self.send_response(response_url, "Usage: /think <description> [--project=<project_name>]")
             return
 
         (
@@ -134,53 +136,18 @@ class SlackBot:
         ) = prepare_task_creation(args)
 
         if not cleaned_description.strip():
-            self.send_response(response_url, "Please provide a task description")
+            self.send_response(response_url, "Please provide a description")
             return
+
+        # Determine priority based on whether project is provided
+        priority = TaskPriority.SERIOUS if project_id else TaskPriority.THOUGHT
 
         self._create_task(
             description=cleaned_description.strip(),
-            priority=TaskPriority.SERIOUS,
+            priority=priority,
             response_url=response_url,
             user_id=user_id,
             note=note,
-            project_name=project_name,
-            project_id=project_id,
-        )
-
-    def handle_think_command(
-        self,
-        args: str,
-        user_id: str,
-        channel_id: str,
-        response_url: str,
-    ):
-        """Handle /think command for lightweight ideas"""
-        if not args:
-            self.send_response(response_url, "Usage: /think <description>")
-            return
-
-        description = args.strip()
-
-        if "--serious" in description:
-            description = description.replace("--serious", "").strip()
-            self.send_response(
-                response_url,
-                "`/think` is for casual ideas. Use `/task` for serious work.",
-            )
-            return
-
-        if not description:
-            self.send_response(response_url, "Please provide a thought to capture")
-            return
-
-        cleaned_description, project_name, project_id, helper_note = prepare_task_creation(description)
-
-        self._create_task(
-            description=cleaned_description,
-            priority=TaskPriority.THOUGHT,
-            response_url=response_url,
-            user_id=user_id,
-            note=helper_note,
             project_name=project_name,
             project_id=project_id,
         )

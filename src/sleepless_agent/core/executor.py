@@ -548,6 +548,50 @@ class ClaudeCodeExecutor:
         # If slug is empty, use 'task'
         return slug if slug else 'task'
 
+    def _get_allowed_directories(
+        self,
+        workspace: Path,
+        workspace_task_type: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> list[str]:
+        """Compute allowed directories for task execution.
+
+        Workspace isolation is always enabled to restrict file access to:
+        - The task's own workspace (set via cwd)
+        - The shared directory (always allowed for cross-task resources)
+        - Project workspace (for project-based tasks only)
+
+        Args:
+            workspace: Task workspace path
+            workspace_task_type: Task type ("new" or "refine")
+            project_id: Optional project ID
+
+        Returns:
+            List of absolute paths to additional allowed directories
+        """
+        allowed = []
+
+        # Always allow shared directory (hardcoded for cross-task resources)
+        shared_dir = self.shared_dir
+        if shared_dir.exists():
+            allowed.append(str(shared_dir.resolve()))
+
+        # For project tasks, allow access to the project workspace
+        # (different from task workspace which is in tasks/)
+        if project_id:
+            project_workspace = self.projects_dir / project_id
+            if project_workspace.exists() and project_workspace != workspace:
+                allowed.append(str(project_workspace.resolve()))
+
+        logger.debug(
+            "executor.access_control",
+            workspace=str(workspace),
+            add_dirs=allowed,
+            task_type=workspace_task_type,
+        )
+
+        return allowed
+
     async def _execute_planner_phase(
         self,
         task_id: int,
@@ -556,6 +600,7 @@ class ClaudeCodeExecutor:
         context: str,
         config_max_turns: int = 10,
         workspace_task_type: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> tuple[str, dict]:
         """Execute planner agent phase
 
@@ -565,6 +610,7 @@ class ClaudeCodeExecutor:
             context: Workspace context (README, files)
             config_max_turns: Maximum turns for this phase
             workspace_task_type: Task type ("new" or "refine")
+            project_id: Optional project ID for access control
 
         Returns:
             Tuple of (plan_text, usage_metrics)
@@ -636,8 +682,16 @@ Output should be:
                 status="running",
             )
 
+            # Get allowed directories for workspace isolation
+            allowed_dirs = self._get_allowed_directories(
+                workspace=workspace,
+                workspace_task_type=workspace_task_type,
+                project_id=project_id,
+            )
+
             options = ClaudeAgentOptions(
                 cwd=str(workspace),
+                add_dirs=allowed_dirs,
                 allowed_tools=["Read", "Glob", "Grep"],
                 permission_mode="acceptEdits",
                 max_turns=config_max_turns,
@@ -695,6 +749,8 @@ Output should be:
         description: str,
         plan_text: str,
         config_max_turns: int = 30,
+        workspace_task_type: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> tuple[str, set, list, int, dict]:
         """Execute worker agent phase
 
@@ -703,6 +759,8 @@ Output should be:
             description: Task description
             plan_text: Plan from planner phase
             config_max_turns: Maximum turns for this phase
+            workspace_task_type: Task type ("new" or "refine")
+            project_id: Optional project ID for access control
 
         Returns:
             Tuple of (output_text, files_modified, commands_executed, exit_code, usage_metrics)
@@ -750,8 +808,16 @@ Please work through the plan systematically and update TodoWrite as you complete
                 status="running",
             )
 
+            # Get allowed directories for workspace isolation
+            allowed_dirs = self._get_allowed_directories(
+                workspace=workspace,
+                workspace_task_type=workspace_task_type,
+                project_id=project_id,
+            )
+
             options = ClaudeAgentOptions(
                 cwd=str(workspace),
+                add_dirs=allowed_dirs,
                 allowed_tools=["Read", "Write", "Edit", "Bash", "Glob", "Grep", "TodoWrite"],
                 permission_mode="acceptEdits",
                 max_turns=config_max_turns,
@@ -826,7 +892,7 @@ Please work through the plan systematically and update TodoWrite as you complete
                 summary = ", ".join(
                     f"{name} x{count}" for name, count in tool_usage_counts.items()
                 )
-                logger.info("executor.worker.tools_summary", summary=summary)
+                logger.debug("executor.worker.tools_summary", summary=summary)
 
             exit_code = 0 if success else 1
 
@@ -855,6 +921,8 @@ Please work through the plan systematically and update TodoWrite as you complete
         files_modified: set,
         commands_executed: list,
         config_max_turns: int = 10,
+        workspace_task_type: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> tuple[str, str, list, list, dict]:
         """Execute evaluator agent phase
 
@@ -866,6 +934,8 @@ Please work through the plan systematically and update TodoWrite as you complete
             files_modified: Files modified by worker
             commands_executed: Commands executed by worker
             config_max_turns: Maximum turns for this phase
+            workspace_task_type: Task type ("new" or "refine")
+            project_id: Optional project ID for access control
 
         Returns:
             Tuple of (evaluation_text, status, outstanding_items, recommendations, usage_metrics)
@@ -920,8 +990,16 @@ Output should include:
                 status="running",
             )
 
+            # Get allowed directories for workspace isolation
+            allowed_dirs = self._get_allowed_directories(
+                workspace=workspace,
+                workspace_task_type=workspace_task_type,
+                project_id=project_id,
+            )
+
             options = ClaudeAgentOptions(
                 cwd=str(workspace),
+                add_dirs=allowed_dirs,
                 allowed_tools=["Read", "Glob"],
                 permission_mode="acceptEdits",
                 max_turns=config_max_turns,
@@ -971,11 +1049,11 @@ Output should include:
             outstanding_items = self._extract_outstanding_items(evaluation_text)
             recommendations = self._extract_recommendations(evaluation_text)
 
-            logger.info("executor.evaluator.status", status=status)
+            logger.debug("executor.evaluator.status", status=status)
             if outstanding_items:
-                logger.info("executor.evaluator.outstanding", count=len(outstanding_items))
+                logger.debug("executor.evaluator.outstanding", count=len(outstanding_items))
             if recommendations:
-                logger.info("executor.evaluator.recommendations", count=len(recommendations))
+                logger.debug("executor.evaluator.recommendations", count=len(recommendations))
 
             # Update README with evaluation results
             # Note: We'll do this right before the usage check so we have access to task_id, project_id, etc.
@@ -1121,6 +1199,7 @@ Output should include:
         project_id: Optional[str] = None,
         project_name: Optional[str] = None,
         task_type: Optional[str] = None,
+        task_context: Optional[dict] = None,
     ) -> Path:
         """Create workspace for task - project-based if project_id provided, else task-specific
 
@@ -1131,10 +1210,35 @@ Output should include:
             project_id: Optional project ID for shared workspace
             project_name: Optional project name (for logging)
             task_type: Task type ("new" or "refine") - if "refine", copy source code
+            task_context: Optional task context dict (may contain refines_task_id)
 
         Returns:
             Path to created workspace
         """
+        # Check if this is a REFINE task with a specific target task to refine
+        refines_task_id = None
+        if task_context:
+            refines_task_id = task_context.get('refines_task_id')
+
+        # If this task refines another task, reuse that task's workspace
+        if refines_task_id is not None:
+            target_workspace = self._find_task_workspace(refines_task_id)
+            if target_workspace and target_workspace.exists():
+                logger.info(
+                    "workspace.reuse",
+                    task_id=task_id,
+                    refines=refines_task_id,
+                    workspace=str(target_workspace)
+                )
+                return target_workspace
+            else:
+                logger.warning(
+                    "workspace.refine_target_missing",
+                    task_id=task_id,
+                    refines=refines_task_id
+                )
+                # Fall through to create new workspace
+
         # Use project-based workspace if project_id provided, else task-specific
         if project_id:
             workspace = self.projects_dir / project_id
@@ -1147,8 +1251,8 @@ Output should include:
 
         workspace.mkdir(parents=True, exist_ok=True)
 
-        # For REFINE tasks, copy source code to workspace
-        if task_type == "refine":
+        # For REFINE tasks without specific target, copy source code to workspace
+        if task_type == "refine" and refines_task_id is None:
             logger.info(
                 "workspace.refine_task",
                 task_id=task_id,
@@ -1176,6 +1280,7 @@ Output should include:
         project_id: Optional[str] = None,
         project_name: Optional[str] = None,
         workspace_task_type: Optional[str] = None,
+        task_context: Optional[dict] = None,
     ) -> Tuple[str, List[str], List[str], int, Dict, Optional[str]]:
         """Execute task with Claude Code SDK
 
@@ -1188,6 +1293,7 @@ Output should include:
             project_id: Optional project ID for shared workspace
             project_name: Optional project name (for logging)
             workspace_task_type: Workspace task type ("new" or "refine") - for workspace initialization
+            task_context: Optional task context dict (may contain refines_task_id)
 
         Returns:
             Tuple of (output_text, files_modified, commands_executed, exit_code, usage_metrics, eval_status)
@@ -1217,17 +1323,21 @@ Output should include:
                 init_git=init_git,
                 project_id=project_id,
                 project_name=project_name,
-                task_type=workspace_task_type
+                task_type=workspace_task_type,
+                task_context=task_context,
             )
 
             # Multi-agent workflow orchestration
-            task_log = logger.bind(
-                component="executor",
-                task_id=task_id,
-                priority=priority,
-                project_id=project_id,
-                project_name=project_name,
-            )
+            # Build context dict with only non-None values to reduce log noise
+            context = {
+                "task_id": task_id,
+                "priority": priority,
+            }
+            if project_id:
+                context["project_id"] = project_id
+            if project_name:
+                context["project_name"] = project_name
+            task_log = logger.bind(**context)
             # Move workflow start to DEBUG - reduces log noise
             workspace_str = str(workspace)
             task_log.debug(
@@ -1287,6 +1397,7 @@ Output should include:
                         context=workspace_context,
                         config_max_turns=multi_agent_config.planner.max_turns,
                         workspace_task_type=workspace_task_type,
+                        project_id=project_id,
                     )
                     all_output_parts.append(f"## Planner Output\n{plan_text}")
 
@@ -1334,6 +1445,8 @@ Output should include:
                         description=description,
                         plan_text=plan_text,
                         config_max_turns=multi_agent_config.worker.max_turns,
+                        workspace_task_type=workspace_task_type,
+                        project_id=project_id,
                     )
                     all_output_parts.append(f"## Worker Output\n{worker_output}")
                     all_files_modified = files_modified
@@ -1391,6 +1504,8 @@ Output should include:
                         files_modified=all_files_modified,
                         commands_executed=all_commands_executed,
                         config_max_turns=multi_agent_config.evaluator.max_turns,
+                        workspace_task_type=workspace_task_type,
+                        project_id=project_id,
                     )
                     all_output_parts.append(f"## Evaluator Output\n{evaluation_summary}")
 
@@ -1464,10 +1579,8 @@ Output should include:
             )
 
             # Simplified workflow complete log - only essential info
-            summary_status = eval_status or ("failed" if final_exit_code else "success")
             task_log.info(
                 "task.workflow.complete",
-                status=summary_status,
                 duration_ms=combined_metrics.get("duration_ms"),
                 files=len(all_modified_files),
                 commands=len(all_commands_executed),

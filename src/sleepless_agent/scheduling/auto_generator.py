@@ -80,7 +80,7 @@ class AutoTaskGenerator:
             return False
 
         # Try to generate a task
-        logger.info("autogen.attempting_generation")
+        logger.debug("autogen.attempting_generation")
         task = await self._generate_task()
         if task:
             logger.info("autogen.task.created", task_id=task.id, preview=task.description[:80], source=self._last_generation_source)
@@ -248,18 +248,45 @@ class AutoTaskGenerator:
 
         recent_work_text = "\n\n".join(recent_work_summary) if recent_work_summary else "No recent task history available"
 
+        # Build list of available tasks for REFINE targeting
+        available_tasks_text = self._format_available_tasks(recent_tasks)
+
         context = {
             'task_count': task_count,
             'pending_count': pending_tasks,
             'in_progress_count': in_progress_tasks,
             'mode': mode,
             'recent_work': recent_work_text,
+            'available_tasks': available_tasks_text,
         }
 
         logger.debug("autogen.context.gathered", task_count=task_count, mode=mode,
-                    partial_tasks=len(readme_analysis['partial_or_incomplete']))
+                    partial_tasks=len(readme_analysis['partial_or_incomplete']),
+                    available_tasks_count=len(recent_tasks))
 
         return context
+
+    def _format_available_tasks(self, tasks: list[Task]) -> str:
+        """Format list of tasks that can be refined
+
+        Args:
+            tasks: List of tasks to format
+
+        Returns:
+            Formatted string listing tasks with IDs and status
+        """
+        if not tasks:
+            return "(No tasks available)"
+
+        lines = []
+        for task in tasks:
+            status = task.status.value.upper() if task.status else "UNKNOWN"
+            desc = task.description[:100]
+            if len(task.description) > 100:
+                desc += "..."
+            lines.append(f"- Task #{task.id} ({status}): {desc}")
+
+        return "\n".join(lines)
 
     async def _generate_task(self) -> Optional[Task]:
         """Generate a task using the configured prompt archetypes."""
@@ -279,11 +306,20 @@ class AutoTaskGenerator:
         if not task_desc:
             return None
 
+        # Parse REFINE target task ID if present
+        parsed_desc, refines_task_id = self._parse_refine_target(task_desc)
+
         # Parse task type from description (for AI-generated tasks with [NEW]/[REFINE] prefix)
-        clean_desc, task_type = self._parse_task_type(task_desc)
+        clean_desc, task_type = self._parse_task_type(parsed_desc)
 
         # All auto-generated tasks are low-priority
         priority = TaskPriority.GENERATED
+
+        # Build task context with refines_task_id if applicable
+        task_context = {}
+        if refines_task_id is not None:
+            task_context['refines_task_id'] = refines_task_id
+            logger.debug("autogen.refine_target", task_id="pending", refines=refines_task_id)
 
         # Create task in database
         task = Task(
@@ -291,7 +327,8 @@ class AutoTaskGenerator:
             priority=priority,
             task_type=task_type,
             status=TaskStatus.PENDING,
-            created_at=datetime.now(timezone.utc).replace(tzinfo=None)
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            context=json.dumps(task_context) if task_context else None,
         )
         self.session.add(task)
         self.session.flush()  # Get the ID
@@ -308,6 +345,7 @@ class AutoTaskGenerator:
                 "prompt_name": prompt_config.name,
                 "task_count_at_generation": context['task_count'],
                 "generation_mode": context['mode'],
+                "refines_task_id": refines_task_id,
             })
         )
         self.session.add(history)
@@ -347,6 +385,37 @@ class AutoTaskGenerator:
         return selected
 
     @staticmethod
+    def _parse_refine_target(task_desc: str) -> tuple[str, Optional[int]]:
+        """Parse task description to extract REFINE target task ID
+
+        Args:
+            task_desc: Raw task description (may include [REFINE:#<id>] prefix)
+
+        Returns:
+            Tuple of (clean_description, refines_task_id or None)
+
+        Examples:
+            "[REFINE:#2] Improve error handling" -> ("Improve error handling", 2)
+            "[REFINE] General improvements" -> ("[REFINE] General improvements", None)
+            "Normal task" -> ("Normal task", None)
+        """
+        import re
+
+        task_desc = task_desc.strip()
+
+        # Search for [REFINE:#<id>] pattern
+        refine_match = re.search(r'\*?\*?\[REFINE:#(\d+)\]\*?\*?', task_desc, re.IGNORECASE)
+        if refine_match:
+            task_id = int(refine_match.group(1))
+            # Extract everything after the tag
+            start_pos = refine_match.end()
+            clean_desc = task_desc[start_pos:].strip()
+            return (clean_desc, task_id)
+
+        # No target specified
+        return (task_desc, None)
+
+    @staticmethod
     def _parse_task_type(task_desc: str) -> tuple[str, TaskType]:
         """Parse task description to extract type prefix and clean description
 
@@ -361,7 +430,8 @@ class AutoTaskGenerator:
         task_desc = task_desc.strip()
 
         # Search for [REFINE] tag anywhere in the description (including in markdown bold markers)
-        refine_match = re.search(r'\*?\*?\[REFINE\]\*?\*?', task_desc, re.IGNORECASE)
+        # This includes both [REFINE] and [REFINE:#<id>] patterns
+        refine_match = re.search(r'\*?\*?\[REFINE(?::#\d+)?\]\*?\*?', task_desc, re.IGNORECASE)
         if refine_match:
             # Extract everything after the tag
             start_pos = refine_match.end()
@@ -420,10 +490,24 @@ class AutoTaskGenerator:
         full_text = "".join(text_segments).strip()
         return full_text or None
 
-    @staticmethod
-    def _build_options(model: str) -> ClaudeAgentOptions:
-        """Create Claude SDK options for the prompt run."""
-        return ClaudeAgentOptions(model=model)
+    def _build_options(self, model: str) -> ClaudeAgentOptions:
+        """Create Claude SDK options for the prompt run.
+
+        Sets cwd to workspace/shared to prevent the auto-generator from accessing
+        workspace/data or other restricted directories during task generation.
+        This ensures generated tasks don't reference files they won't have access to.
+        """
+        from pathlib import Path
+
+        # Use shared directory as cwd to prevent access to workspace/data
+        shared_dir = Path("./workspace/shared")
+        shared_dir.mkdir(parents=True, exist_ok=True)
+
+        return ClaudeAgentOptions(
+            model=model,
+            cwd=str(shared_dir),
+            allowed_tools=[],  # No file access needed for task generation
+        )
 
     @staticmethod
     def _log_sdk_failure(

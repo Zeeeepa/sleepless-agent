@@ -206,7 +206,7 @@ class SleeplessAgent:
         self.running = False
         if self.live_status_tracker:
             self.live_status_tracker.clear_all()
-        self.bot.stop()
+        # Don't call bot.stop() here - let the finally block handle cleanup
         sys.exit(0)
 
     async def run(self) -> None:

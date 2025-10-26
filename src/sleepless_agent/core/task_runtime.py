@@ -75,7 +75,6 @@ class TaskRuntime:
         task_log.info(
             "task.start",
             description=task.description,
-            timeout_s=self.config.agent.task_timeout_seconds,
         )
 
         start_time = time.time()
@@ -162,7 +161,7 @@ class TaskRuntime:
 
             # Check evaluator status before marking as completed
             # Only mark as completed if evaluator says COMPLETE, or if evaluator is disabled
-            if eval_status and eval_status.upper() in ["INCOMPLETE", "FAILED"]:
+            if eval_status and eval_status.upper() in ["INCOMPLETE", "FAILED", "PARTIAL"]:
                 task_log.warning(
                     "task.evaluator_incomplete",
                     eval_status=eval_status,
@@ -176,6 +175,7 @@ class TaskRuntime:
                     duration_s=processing_time,
                     eval_status=eval_status,
                 )
+                task_log.info("=" * 80)
             else:
                 self.task_queue.mark_completed(task.id, result_id=result.id)
                 self._log_success_metrics(
@@ -192,9 +192,10 @@ class TaskRuntime:
                     "task.complete",
                     status="completed",
                     duration_s=processing_time,
-                    git_commit=git_commit_sha,
+                    git_commit=git_commit_sha[:8] if git_commit_sha else None,
                     eval_status=eval_status,
                 )
+                task_log.info("=" * 80)
         except PauseException as pause:
             await self._handle_pause_exception(
                 task=task,
@@ -217,9 +218,21 @@ class TaskRuntime:
                 duration_s=processing_time,
                 error=str(exc),
             )
+            task_log.info("=" * 80)
 
     async def _run_task_with_timeout(self, task):
+        import json
         timeout = self.config.agent.task_timeout_seconds
+
+        # Parse task context for workspace reuse
+        task_context = None
+        if task.context:
+            try:
+                task_context = json.loads(task.context)
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("task.context.parse_failed", task_id=task.id, context=task.context)
+                task_context = None
+
         try:
             return await asyncio.wait_for(
                 self.claude.execute_task(
@@ -231,6 +244,7 @@ class TaskRuntime:
                     project_id=task.project_id,
                     project_name=task.project_name,
                     workspace_task_type=task.task_type.value if task.task_type else None,
+                    task_context=task_context,
                 ),
                 timeout=timeout,
             )

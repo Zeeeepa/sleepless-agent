@@ -35,18 +35,22 @@ class GitManager:
         try:
             self.repo_path.mkdir(parents=True, exist_ok=True)
 
+            repo_initialized = False
             if not self._repo_exists():
                 self._run_git("init")
                 self._run_git("config", "user.email", "agent@sleepless.local")
                 self._run_git("config", "user.name", "Sleepless Agent")
-                logger.info(f"Initialized git repo at {self.repo_path}")
+                repo_initialized = True
 
             if not self._has_commits():
                 gitkeep = self.repo_path / ".gitkeep"
                 gitkeep.touch(exist_ok=True)
                 self._run_git("add", ".gitkeep")
                 self._run_git("commit", "-m", "Initial commit")
-                logger.info("Created initial commit in workspace repo")
+                if repo_initialized:
+                    logger.info("git.workspace.initialized", path=str(self.repo_path))
+                else:
+                    logger.debug("Created initial commit in existing repo")
 
             # Ensure the default task branch exists
             if self.default_task_branch != self.main_branch:
@@ -69,7 +73,7 @@ class GitManager:
 
         self._checkout(self.main_branch)
         self._run_git("branch", branch, self.main_branch)
-        logger.info(f"Created branch '{branch}' from {self.main_branch}")
+        logger.debug(f"Created branch '{branch}' from {self.main_branch}")
 
     def commit_workspace_changes(
         self,
@@ -117,11 +121,10 @@ class GitManager:
             try:
                 remote_url = self._run_git("remote", "get-url", "origin")
                 if remote_url and not self._check_remote_exists(remote_url):
-                    logger.info("Remote repository not found, attempting to create it")
                     if self._create_github_repo(remote_url):
-                        logger.info("Repository created successfully, proceeding with push")
+                        logger.info("Created remote repository and will push")
                     else:
-                        logger.warning("Failed to create repository, push may fail")
+                        logger.warning("Failed to create remote repository, push may fail")
             except Exception as exc:
                 logger.debug(f"Failed to auto-create repository: {exc}")
 
@@ -162,9 +165,10 @@ class GitManager:
         try:
             if self._has_remote(remote_name):
                 self._run_git("remote", "set-url", remote_name, remote_url)
+                logger.info("git.remote.updated", remote=remote_name, url=remote_url)
             else:
                 self._run_git("remote", "add", remote_name, remote_url)
-            logger.info(f"Configured remote '{remote_name}' -> {remote_url}")
+                logger.info("git.remote.added", remote=remote_name, url=remote_url)
         except Exception as exc:
             logger.error(f"Failed to configure remote '{remote_name}': {exc}")
             raise
@@ -365,11 +369,10 @@ class GitManager:
         self._checkout(self.main_branch)
         try:
             self._run_git("merge", "--ff-only", branch)
-            logger.info(f"Merged '{branch}' into {self.main_branch}")
+            logger.debug(f"Merged '{branch}' into {self.main_branch}")
         except RuntimeError:
-            logger.warning(
-                f"Fast-forward merge failed for '{branch}'. "
-                "Falling back to non fast-forward merge."
+            logger.debug(
+                f"Fast-forward merge failed for '{branch}', using --no-ff merge"
             )
             self._run_git("merge", "--no-ff", branch, "-m", f"Merge branch '{branch}'")
 
@@ -418,22 +421,21 @@ class GitManager:
             # Get repo name (last part)
             repo_name = repo.split("/")[-1]
 
-            logger.info(f"Creating GitHub repository: {repo}")
+            logger.debug(f"Creating GitHub repository: {repo}")
             result = subprocess.run(
-                ["gh", "repo", "create", repo, "--private", "--source", str(self.repo_path)],
+                ["gh", "repo", "create", repo, "--private"],
                 capture_output=True,
                 text=True,
                 timeout=30,
             )
 
             if result.returncode == 0:
-                logger.info(f"Successfully created GitHub repository: {repo}")
                 return True
             else:
-                logger.error(f"Failed to create GitHub repository: {result.stderr}")
+                logger.error(f"Failed to create repository {repo}: {result.stderr.strip()}")
                 return False
         except Exception as exc:
-            logger.error(f"Failed to create GitHub repository: {exc}")
+            logger.error(f"Failed to create repository: {exc}")
             return False
 
     def _normalize_files(self, workspace_path: Path, files: Iterable[str]) -> List[str]:

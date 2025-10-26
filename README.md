@@ -11,13 +11,13 @@ A 24/7 AI assistant daemon that continuously works on tasks via Slack. Uses Clau
 
 ## Full Precedure
 
-  1. Command arrives via CLI (sle task "...") or Slack (/task ...)
+  1. Command arrives via CLI (sle think -p project "..." or sle think "...") or Slack (/think --project=project ... or /think ...)
   2. TaskQueue stores it in SQLite database with status PENDING
   3. Daemon polls every 5 seconds, calling _process_tasks()
   4. SmartScheduler decides if task can execute:
     - Checks budget (time-based quotas: 90% night, 10% day)
     - Checks available parallel slots
-    - Prioritizes SERIOUS tasks over RANDOM thoughts
+    - Prioritizes SERIOUS tasks (with -p/--project) over THOUGHT tasks (without -p)
     - Returns list of tasks to execute
   5. Daemon executes via _execute_task():
     - Marks task as IN_PROGRESS

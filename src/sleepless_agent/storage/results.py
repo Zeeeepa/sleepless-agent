@@ -76,7 +76,7 @@ class ResultManager(SQLiteStore):
             session.add(result)
             session.flush()
             result_file = self._write_result_file(result)
-            logger.info(f"Result saved for task {task_id}: {result_file}")
+            logger.debug(f"Result saved for task {task_id}: {result_file}")
             return result
 
         try:
