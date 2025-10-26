@@ -463,7 +463,7 @@ class SmartScheduler:
     def schedule_task(
         self,
         description: str,
-        priority: TaskPriority = TaskPriority.RANDOM,
+        priority: TaskPriority = TaskPriority.THOUGHT,
         project_id: Optional[str] = None,
         project_name: Optional[str] = None,
     ) -> Task:
@@ -484,11 +484,11 @@ class SmartScheduler:
                 priority="serious",
                 project=project_name,
             )
-        elif priority == TaskPriority.RANDOM:
+        elif priority == TaskPriority.THOUGHT:
             logger.info(
                 "scheduler.task.scheduled",
                 task_id=task.id,
-                priority="random",
+                priority="thought",
                 project=project_name,
             )
         else:
@@ -601,7 +601,7 @@ class SmartScheduler:
         # Priority multiplier
         if task.priority == TaskPriority.SERIOUS:
             score += 1000
-        elif task.priority == TaskPriority.RANDOM:
+        elif task.priority == TaskPriority.THOUGHT:
             score += 100
         elif task.priority == TaskPriority.GENERATED:
             score += 10

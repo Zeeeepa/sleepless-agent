@@ -13,7 +13,7 @@ Base = declarative_base()
 
 class TaskPriority(str, Enum):
     """Task priority levels"""
-    RANDOM = "random"  # Low priority, experimental
+    THOUGHT = "thought"  # Low priority, experimental
     SERIOUS = "serious"  # High priority, needs completion
     GENERATED = "generated"  # Auto-generated backlog filler
 
@@ -46,7 +46,7 @@ class Task(Base):
             validate_strings=True,
             create_constraint=False,
         ),
-        default=TaskPriority.RANDOM,
+        default=TaskPriority.THOUGHT,
         nullable=False,
     )
     task_type = Column(
@@ -183,7 +183,7 @@ class TaskPool(Base):
             validate_strings=True,
             create_constraint=False,
         ),
-        default=TaskPriority.RANDOM,
+        default=TaskPriority.THOUGHT,
         nullable=False,
     )
     category = Column(String(100), nullable=True)

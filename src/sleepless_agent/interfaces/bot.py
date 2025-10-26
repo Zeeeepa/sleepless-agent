@@ -177,7 +177,7 @@ class SlackBot:
 
         self._create_task(
             description=cleaned_description,
-            priority=TaskPriority.RANDOM,
+            priority=TaskPriority.THOUGHT,
             response_url=response_url,
             user_id=user_id,
             note=helper_note,
@@ -207,7 +207,7 @@ class SlackBot:
 
             if priority == TaskPriority.SERIOUS:
                 priority_label = "🔴 Serious task"
-            elif priority == TaskPriority.RANDOM:
+            elif priority == TaskPriority.THOUGHT:
                 priority_label = "🟡 Thought"
             else:
                 priority_label = "🟢 Generated task"

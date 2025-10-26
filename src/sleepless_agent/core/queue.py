@@ -42,7 +42,7 @@ class TaskQueue(SQLiteStore):
     def add_task(
         self,
         description: str,
-        priority: TaskPriority = TaskPriority.RANDOM,
+        priority: TaskPriority = TaskPriority.THOUGHT,
         context: Optional[dict] = None,
         slack_user_id: Optional[str] = None,
         slack_thread_ts: Optional[str] = None,
@@ -84,7 +84,7 @@ class TaskQueue(SQLiteStore):
         def _op(session: Session) -> List[Task]:
             priority_order = case(
                 (Task.priority == TaskPriority.SERIOUS.value, 0),
-                (Task.priority == TaskPriority.RANDOM.value, 1),
+                (Task.priority == TaskPriority.THOUGHT.value, 1),
                 else_=2,
             )
             return (

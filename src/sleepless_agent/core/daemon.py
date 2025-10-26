@@ -189,7 +189,7 @@ class SleeplessAgent:
 
         self.task_queue.add_task(
             description=seed_description,
-            priority=TaskPriority.RANDOM,
+            priority=TaskPriority.THOUGHT,
         )
 
         try:
