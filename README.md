@@ -1,52 +1,31 @@
+<div align="center">
+
 # Sleepless Agent
 
-A 24/7 AI assistant daemon that continuously works on tasks via Slack. Uses Claude Code CLI via Python Agent SDK to process both random thoughts and serious jobs automatically with isolated workspaces.
+**A 24/7 AgentOS that works while you sleep**
 
-## About
+[![Documentation](https://img.shields.io/badge/Documentation-007ACC?style=for-the-badge&logo=markdown&logoColor=white)](https://context-machine-lab.github.io/sleepless-agent/)
+[![DeepWiki](https://img.shields.io/badge/DeepWiki-582C83?style=for-the-badge&logo=wikipedia&logoColor=white)](https://deepwiki.com/context-machine-lab/sleepless-agent)
+[![WeChat](https://img.shields.io/badge/WeChat-07C160?style=for-the-badge&logo=wechat&logoColor=white)](./assets/wechat.jpg)
+[![Discord](https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/74my3Wkn)
 
-- Maintained by Context Machine Lab
-- Ships as `sleepless-agent` on PyPI (`pip install sleepless-agent`)
-- Automates task intake, execution, and reporting via Slack + Claude integration
-- Designed for continuous operation with isolated workspaces and automated git hygiene
+</div>
 
-## Full Precedure
-
-  1. Command arrives via CLI (sle think -p project "..." or sle think "...") or Slack (/think --project=project ... or /think ...)
-  2. TaskQueue stores it in SQLite database with status PENDING
-  3. Daemon polls every 5 seconds, calling _process_tasks()
-  4. SmartScheduler decides if task can execute:
-    - Checks budget (time-based quotas: 90% night, 10% day)
-    - Checks available parallel slots
-    - Prioritizes SERIOUS tasks (with -p/--project) over THOUGHT tasks (without -p)
-    - Returns list of tasks to execute
-  5. Daemon executes via _execute_task():
-    - Marks task as IN_PROGRESS
-    - Creates isolated workspace
-    - Calls ClaudeCodeExecutor
-  6. ClaudeCodeExecutor runs the task:
-    - Builds enhanced prompt based on task type/priority
-    - Calls Claude SDK with streaming
-    - Tracks file modifications and commands
-    - Returns results with metrics
-  7. Daemon completes the flow:
-    - Commits to git (for SERIOUS tasks)
-    - Stores results in database
-    - Marks as COMPLETED or FAILED
-    - Sends Slack notification
+Have Claude Code Pro but not using it at night? Transform it into an AgentOS that handles your ideas and tasks while you sleep. This is a 24/7 AI assistant daemon powered by Claude Code CLI and Python Agent SDK that processes both random thoughts and serious tasks via Slack with isolated workspaces.
 
 
-## Features
+## ✨ Features
 
 - 🤖 **Continuous Operation**: Runs 24/7 daemon, always ready for new tasks
 - 💬 **Slack Integration**: Submit tasks via Slack commands
-- 🎯 **Hybrid Autonomy**: Auto-applies random thoughts, requires review for serious jobs
+- 🎯 **Hybrid Autonomy**: Auto-applies random thoughts, requires review for serious tasks
 - ⚡ **Smart Scheduling**: Optimizes task execution based on priorities
 - 📊 **Task Queue**: SQLite-backed persistent task management
 - 🔌 **Claude Code SDK**: Uses Python Agent SDK to interface with Claude Code CLI
 - 🏗️ **Isolated Workspaces**: Each task gets its own workspace for true parallelism
 - 📝 **Result Storage**: All outputs saved with metadata for future reference
 
-## Prerequisites
+## ⚙️ Prerequisites
 
 - Python 3.11+
 - Slack workspace admin access
@@ -54,7 +33,7 @@ A 24/7 AI assistant daemon that continuously works on tasks via Slack. Uses Clau
 - Git (for auto-commits)
 - gh CLI (optional, for PR automation)
 
-## Quick Start
+## 🚀 Quick Start
 
 ### 1. Install
 
@@ -86,8 +65,7 @@ Visit https://api.slack.com/apps and create a new app:
 
 **Create Slash Commands**
 Settings > Slash Commands > Create New Command:
-- `/task` - Add serious task
-- `/think` - Capture random thought
+- `/think` - Capture thought or task (use `-p project-name` for serious tasks)
 - `/check` - Check queue status
 - `/cancel` - Cancel task or project
 - `/report` - Show reports or task details
@@ -119,11 +97,7 @@ Set:
 ### 4. Run
 
 ```bash
-# Terminal 1: Start the daemon
 sle daemon
-
-# Terminal 2 (optional): Monitor logs
-tail -f workspace/data/agent.log
 ```
 
 You should see startup logs similar to:
@@ -133,16 +107,8 @@ You should see startup logs similar to:
 ```
 Logs are rendered with Rich for readability; set `SLEEPLESS_LOG_LEVEL=DEBUG` to increase verbosity.
 
-### Logging
 
-Rich console output is powered by [Rich](https://rich.readthedocs.io/) and now mirrors the structured events that feed our JSON logs. Every console line maps to a canonical `event` (for example `task.phase.done`, `scheduler.dispatch`, `usage.snapshot`) so you can skim the terminal or process the data programmatically.
-
-Structured copies of each log line are written to JSONL files under `workspace/.logs` by default (override with `SLEEPLESS_LOG_DIR`). These files preserve context such as `task_id`, `phase`, `usage_percent`, and timing deltas, making it easy to build dashboards or run ad-hoc analysis later.
-
-Set `SLEEPLESS_LOG_LEVEL` to tune verbosity; `DEBUG` includes low-level worker/evaluator metrics while `INFO` keeps to lifecycle milestones.
-
-
-## Slack Commands
+## 💬 Slack Commands
 
 All Slack commands align with the CLI commands for consistency:
 
@@ -150,9 +116,8 @@ All Slack commands align with the CLI commands for consistency:
 
 | Command | Purpose | Example |
 |---------|---------|---------|
-| `/task` | Add serious task | `/task Add OAuth2 support` |
-| `/task` | With project | `/task Add OAuth2 support --project=backend` |
 | `/think` | Capture random thought | `/think Explore async ideas` |
+| `/think -p <project>` | Add serious task to project | `/think Add OAuth2 support -p backend` |
 | `/check` | Show system status | `/check` |
 | `/cancel` | Cancel task or project | `/cancel 5` or `/cancel my-app` |
 
@@ -160,21 +125,15 @@ All Slack commands align with the CLI commands for consistency:
 
 | Command | Purpose | Example |
 |---------|---------|---------|
-| `/report` | Today's report | `/report` |
-| `/report` | Task details | `/report 42` |
-| `/report` | Date report | `/report 2025-10-22` |
-| `/report` | Project report | `/report my-app` |
-| `/report` | List all reports | `/report --list` |
-| `/trash` | List trash | `/trash list` |
-| `/trash` | Restore project | `/trash restore my-app` |
-| `/trash` | Empty trash | `/trash empty` |
+| `/report` | Today's report, task details, date/project report, or list all | `/report`, `/report 42`, `/report 2025-10-22`, `/report my-app`, `/report --list` |
+| `/trash` | List, restore, or empty trash | `/trash list`, `/trash restore my-app`, `/trash empty` |
 
-## Command Line Interface
+## ⌨️ Command Line Interface
 
 Install the project (or run within the repo) and use the bundled CLI:
 
 ```bash
-python -m sleepless_agent.interfaces.cli task "Ship release checklist"
+python -m sleepless_agent.interfaces.cli think "Ship release checklist" -p my-app
 # or, after installing the package:
 sle check
 ```
@@ -183,9 +142,9 @@ The CLI mirrors the Slack slash commands:
 
 | Command | Purpose | Example |
 |---------|---------|---------|
-| `task <description>` | Queue a serious task | `task "Build onboarding flow"` |
 | `think <description>` | Capture a random thought | `think "Explore async patterns"` |
-| `status` | Show system health, queue, and performance metrics | `status` |
+| `think <description> -p <project>` | Queue a serious task to project | `think "Build onboarding flow" -p backend` |
+| `check` | Show system health, queue, and performance metrics | `check` |
 | `report [identifier]` | Show task details, daily reports, or project summaries (`--list` for all reports) | `report 7` |
 | `cancel <identifier>` | Move a task or project to trash | `cancel 9` or `cancel my-app` |
 | `trash [subcommand] [identifier]` | Manage trash (list, restore, empty) | `trash restore my-app` |
@@ -193,10 +152,10 @@ The CLI mirrors the Slack slash commands:
 Override storage locations when needed:
 
 ```bash
-sle --db-path ./tmp/tasks.db --results-path ./tmp/results status
+sle --db-path ./tmp/tasks.db --results-path ./tmp/results check
 ```
 
-## Architecture
+## 🏗️ Architecture
 
 ```
 Slack Bot
@@ -222,7 +181,7 @@ Result Manager (Storage + Git)
 - **git_manager.py**: Git automation (commits, PRs)
 - **monitor.py**: Health checks and metrics
 
-## File Structure
+## 📁 File Structure
 
 ```
 sleepless-agent/
@@ -254,79 +213,63 @@ sleepless-agent/
 └── docs/                  # Additional documentation
 ```
 
-## Configuration
+## ⚙️ Configuration
 
 Runtime settings come from environment variables loaded via `.env` (see `.env.example`). Update those values or export them in your shell to tune agent behavior.
 
-### Pro Plan Usage Management
+### Usage Management
 
-The agent automatically monitors your Claude Code Pro plan usage and prevents task overruns with an **85% usage pause threshold**. This ensures you never accidentally exhaust your message limit.
+The agent automatically monitors Claude Code usage and intelligently manages task execution based on configurable thresholds.
 
 **How it works:**
 
-1. **Usage Monitoring** - Every task checks your Pro plan usage via `claude /usage` command
-2. **Pause Threshold (85%)** - When usage reaches 85%, task generation automatically stops
-3. **Resume on Reset** - Tasks resume after your 5-hour window resets
-4. **Time-based Quotas** - Budget is split: 90% for night (8 PM - 8 AM), 10% for day (8 AM - 8 PM)
+1. **Usage Monitoring** - Every task checks usage via `claude /usage` command
+2. **Time-based Thresholds** - Different thresholds for day and night operations
+3. **Smart Scheduling** - Automatically pauses task generation when threshold is reached
+4. **Automatic Resume** - Tasks resume when usage resets
 
-**Example flow:**
-```
-- Start of window: 0/40 messages (0% - all green)
-- Mid-window: 28/40 messages (70% - status OK, tasks continue)
-- Threshold reached: 34/40 messages (85% - tasks pause, logs warning)
-- Window resets: 0/40 messages (resets at 18:59:00, tasks resume)
-```
+**Time-Based Configuration (configurable in `config.yaml`):**
+- **Nighttime (1 AM - 9 AM by default):** 96% threshold - agent works aggressively while you sleep
+- **Daytime (9 AM - 1 AM by default):** 95% threshold - preserves capacity for your manual usage
+- Configure via: `claude_code.threshold_day`, `claude_code.threshold_night`
+- Time ranges via: `claude_code.night_start_hour`, `claude_code.night_end_hour`
 
 **Visibility:**
-- Dashboard: Shows `Pro Usage: X% / Y% limit` in `sle check` (Y = 20% daytime, 80% nighttime)
-- Logs: Each usage check logs Pro plan usage with time-based threshold
-- Config: Adjustable via `claude_code.threshold_day` and `claude_code.threshold_night` in `config.yaml`
+- Dashboard: Shows usage percentage in `sle check`
+- Logs: Each usage check logs current usage with applicable threshold
+- Config: All thresholds and time ranges adjustable in `config.yaml`
 
-**Time-Based Thresholds:**
-- **Daytime (8 AM - 8 PM):** Pause at 20% (saves quota for your manual usage)
-- **Nighttime (8 PM - 8 AM):** Pause at 80% (agent works aggressively while you sleep)
-- Time ranges are configurable via `claude_code.night_start_hour` and `claude_code.night_end_hour` in `config.yaml`
+**Behavior at threshold:**
 - ⏸️ New task generation pauses at threshold
 - ✅ Running tasks complete normally
 - 📋 Pending tasks wait in queue
-- ⏱️ Grace period: +1 minute after reset to avoid edge cases
+- ⏱️ Automatic resume when usage resets
 
-**Note:** Pro plan usage monitoring is mandatory and always enabled.
-
-## Environment Variables
+## 🔧 Environment Variables
 
 ```bash
 # Required
 SLACK_BOT_TOKEN=xoxb-...
 SLACK_APP_TOKEN=xapp-...
-
-# Optional
-AGENT_WORKSPACE=./workspace
-AGENT_DB_PATH=./workspace/data/tasks.db
-AGENT_RESULTS_PATH=./workspace/data/results
-GIT_USER_NAME=Sleepless Agent
-GIT_USER_EMAIL=agent@sleepless.local
-SLEEPLESS_LOG_LEVEL=INFO
-SLEEPLESS_LOG_DIR=workspace/.logs
 ```
 
-## Task Types
+## 📝 Task Types
 
 The agent intelligently processes different task types:
 
-1. **Thoughts** - Auto-commits to `thought-ideas` branch
+1. **Random Thoughts** - Auto-commits to `thought-ideas` branch
    ```
    /think Research async patterns in Rust
    /think What's the best way to implement caching?
    ```
 
-2. **Serious Jobs** - Creates feature branch and PR, requires review
+2. **Serious Tasks** - Creates feature branch and PR, requires review (use `-p` flag)
    ```
-   /task Add authentication to user service
-   /task Refactor payment processing module
+   /think Add authentication to user service -p backend
+   /think Refactor payment processing module -p payments
    ```
 
-## Development
+## 🛠️ Development
 
 ### Add New Task Type
 
@@ -352,7 +295,7 @@ pytest
 SLEEPLESS_LOG_LEVEL=DEBUG python -m sleepless_agent.daemon
 ```
 
-## Monitoring
+## 📊 Monitoring
 
 ### Real-time Logs
 ```bash
@@ -375,7 +318,7 @@ tail -100 workspace/data/metrics.jsonl | jq .
 /report --list  # Available reports
 ```
 
-## Deployment
+## 🚢 Deployment
 
 ### Linux (systemd)
 ```bash
@@ -389,7 +332,7 @@ make install-launchd
 launchctl list | grep sleepless
 ```
 
-## Example Workflows
+## 💡 Example Workflows
 
 ### Daily Brainstorm
 ```
@@ -401,18 +344,18 @@ launchctl list | grep sleepless
 
 ### Production Fix
 ```
-/task Fix authentication bug in login endpoint
+/think Fix authentication bug in login endpoint -p backend
 /report <id>     # Get the PR link
 # Review and merge PR
 ```
 
 ### Code Audit
 ```
-/task Security audit of user service
-/task Performance analysis of payment module
+/think Security audit of user service -p backend
+/think Performance analysis of payment module -p payments
 ```
 
-## Troubleshooting
+## 🔍 Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
@@ -423,15 +366,15 @@ launchctl list | grep sleepless
 | Out of credits | Wait for 5-hour window refresh. Review scheduler logs: `tail -f workspace/data/agent.log | grep credit` |
 | Database locked | Close other connections, try: `rm workspace/data/tasks.db && python -m sleepless_agent.daemon` |
 
-## Performance Tips
+## ⚡ Performance Tips
 
 1. **Use thoughts to fill idle time** - Maximizes usage
-2. **Batch serious jobs** - Reduces context switching
+2. **Batch serious tasks** - Reduces context switching
 3. **Monitor credits** - Watch scheduler logs for window resets
 4. **Review git history** - Check `thought-ideas` branch regularly
 5. **Check metrics** - Run `sle check` to track performance
 
-## Security Notes
+## 🔒 Security Notes
 
 - Secrets are validated before git commits
 - Python syntax checked before commits
@@ -439,20 +382,12 @@ launchctl list | grep sleepless
 - .env file never committed to git
 - Workspace changes validated before applying
 
-## Releases
+## 📦 Releases
 
 - Latest stable: **0.1.0** – published on [PyPI](https://pypi.org/project/sleepless-agent/0.1.0/)
 - Install or upgrade with `pip install -U sleepless-agent`
 - Release notes tracked via GitHub Releases (tag `v0.1.0` onward)
 
-## Additional Documentation
-
-For more detailed information, see the docs/ folder:
-
-- **[GETTING_STARTED.md](docs/GETTING_STARTED.md)** - Detailed setup guide and architecture overview
-- **[QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)** - Command reference and quick tips
-- **[CLAUDE_CODE_REDESIGN.md](docs/CLAUDE_CODE_REDESIGN.md)** - Technical design document for Claude Code migration
-
-## License
+## 📄 License
 
 Released under the [MIT License](LICENSE)
