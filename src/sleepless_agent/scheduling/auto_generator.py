@@ -42,8 +42,10 @@ class AutoTaskGenerator:
         budget_manager: BudgetManager,
         default_model: str,
         usage_command: str,
-        pause_threshold_day: float,
-        pause_threshold_night: float,
+        threshold_day: float,
+        threshold_night: float,
+        night_start_hour: int = 20,
+        night_end_hour: int = 8,
     ):
         """Initialize auto-generator with database session and config"""
         self.session = db_session
@@ -51,8 +53,10 @@ class AutoTaskGenerator:
         self.budget_manager = budget_manager
         self.default_model = default_model
         self.usage_command = usage_command
-        self.pause_threshold_day = pause_threshold_day
-        self.pause_threshold_night = pause_threshold_night
+        self.threshold_day = threshold_day
+        self.threshold_night = threshold_night
+        self.night_start_hour = night_start_hour
+        self.night_end_hour = night_end_hour
 
         # Track generation metadata
         self.last_generation_time: Optional[datetime] = None
@@ -82,7 +86,7 @@ class AutoTaskGenerator:
 
         try:
             checker = ProPlanUsageChecker(command=self.usage_command)
-            threshold = self.pause_threshold_night if is_nighttime() else self.pause_threshold_day
+            threshold = self.threshold_night if is_nighttime(night_start_hour=self.night_start_hour, night_end_hour=self.night_end_hour) else self.threshold_day
             should_pause, _ = checker.check_should_pause(threshold_percent=threshold)
 
             # Generate only when NOT paused (i.e., usage < threshold)

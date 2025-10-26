@@ -280,11 +280,12 @@ The agent automatically monitors your Claude Code Pro plan usage and prevents ta
 **Visibility:**
 - Dashboard: Shows `Pro Usage: X% / Y% limit` in `sle check` (Y = 20% daytime, 80% nighttime)
 - Logs: Each usage check logs Pro plan usage with time-based threshold
-- Config: Adjustable via `claude_code.pause_threshold_day` and `claude_code.pause_threshold_night` in `config.yaml`
+- Config: Adjustable via `claude_code.threshold_day` and `claude_code.threshold_night` in `config.yaml`
 
 **Time-Based Thresholds:**
 - **Daytime (8 AM - 8 PM):** Pause at 20% (saves quota for your manual usage)
 - **Nighttime (8 PM - 8 AM):** Pause at 80% (agent works aggressively while you sleep)
+- Time ranges are configurable via `claude_code.night_start_hour` and `claude_code.night_end_hour` in `config.yaml`
 - ⏸️ New task generation pauses at threshold
 - ✅ Running tasks complete normally
 - 📋 Pending tasks wait in queue
@@ -417,7 +418,7 @@ launchctl list | grep sleepless
 |-------|----------|
 | Bot not responding | Check `.env` tokens, verify Socket Mode enabled, check logs: `tail -f workspace/data/agent.log` |
 | Tasks not executing | Verify Claude Code CLI installed: `npm list -g @anthropic-ai/claude-code`, check workspace permissions |
-| Tasks paused (threshold reached) | Usage has reached time-based threshold (20% daytime / 80% nighttime). Wait for window reset (check logs for reset time), or adjust thresholds in `config.yaml` (`claude_code.pause_threshold_day` / `claude_code.pause_threshold_night`). Run `sle check` to see current usage. |
+| Tasks paused (threshold reached) | Usage has reached time-based threshold (20% daytime / 80% nighttime). Wait for window reset (check logs for reset time), or adjust thresholds in `config.yaml` (`claude_code.threshold_day` / `claude_code.threshold_night`). Run `sle check` to see current usage. |
 | Git commits fail | Install `gh` CLI and authenticate: `gh auth login` |
 | Out of credits | Wait for 5-hour window refresh. Review scheduler logs: `tail -f workspace/data/agent.log | grep credit` |
 | Database locked | Close other connections, try: `rm workspace/data/tasks.db && python -m sleepless_agent.daemon` |

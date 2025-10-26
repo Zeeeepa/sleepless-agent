@@ -70,8 +70,10 @@ class SleeplessAgent:
             daily_budget_usd=10.0,
             night_quota_percent=90.0,
             usage_command=self.config.claude_code.usage_command,
-            pause_threshold_day=self.config.claude_code.pause_threshold_day,
-            pause_threshold_night=self.config.claude_code.pause_threshold_night,
+            threshold_day=self.config.claude_code.threshold_day,
+            threshold_night=self.config.claude_code.threshold_night,
+            night_start_hour=self.config.claude_code.night_start_hour,
+            night_end_hour=self.config.claude_code.night_end_hour,
         )
 
         self.auto_generator = AutoTaskGenerator(
@@ -80,8 +82,10 @@ class SleeplessAgent:
             budget_manager=self.budget_manager,
             default_model=self.config.claude_code.model,
             usage_command=self.config.claude_code.usage_command,
-            pause_threshold_day=self.config.claude_code.pause_threshold_day,
-            pause_threshold_night=self.config.claude_code.pause_threshold_night,
+            threshold_day=self.config.claude_code.threshold_day,
+            threshold_night=self.config.claude_code.threshold_night,
+            night_start_hour=self.config.claude_code.night_start_hour,
+            night_end_hour=self.config.claude_code.night_end_hour,
         )
 
         self.claude = ClaudeCodeExecutor(

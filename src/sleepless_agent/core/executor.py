@@ -995,7 +995,7 @@ Output should include:
                 )
 
                 # Use time-based threshold
-                threshold = config.claude_code.pause_threshold_night if is_nighttime() else config.claude_code.pause_threshold_day
+                threshold = config.claude_code.threshold_night if is_nighttime(night_start_hour=config.claude_code.night_start_hour, night_end_hour=config.claude_code.night_end_hour) else config.claude_code.threshold_day
                 should_pause, reset_time = checker.check_should_pause(
                     threshold_percent=threshold
                 )
