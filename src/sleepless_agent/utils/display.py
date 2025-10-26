@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 
@@ -30,7 +30,7 @@ def relative_time(dt: Optional[datetime], default: str = "—") -> str:
     if not dt:
         return default
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     delta = now - dt
     suffix = "ago"
     total_seconds = delta.total_seconds()
@@ -42,7 +42,7 @@ def relative_time(dt: Optional[datetime], default: str = "—") -> str:
     return f"{format_duration(total_seconds)} {suffix}"
 
 
-def shorten(text: str, limit: int = 70) -> str:
+def shorten(text: str, limit: int = 120) -> str:
     """Compress whitespace and truncate to a limit with ellipsis."""
     clean = " ".join(text.strip().split())
     if len(clean) <= limit:

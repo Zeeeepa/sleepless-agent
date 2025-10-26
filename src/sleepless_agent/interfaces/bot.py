@@ -1,7 +1,7 @@
 """Slack bot interface for task management"""
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sleepless_agent.monitoring.logging import get_logger
@@ -277,7 +277,7 @@ class SlackBot:
             if workspace_path.exists():
                 trash_dir = Path("workspace") / "trash"
                 trash_dir.mkdir(parents=True, exist_ok=True)
-                timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                timestamp = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y%m%d_%H%M%S")
                 trash_path = trash_dir / f"project_{project_id}_{timestamp}"
                 workspace_path.rename(trash_path)
                 message += f"✅ Moved workspace to trash"
@@ -501,7 +501,7 @@ class SlackBot:
             if not args:
                 # Default: today's report
                 from datetime import datetime
-                date = datetime.utcnow().strftime("%Y-%m-%d")
+                date = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d")
                 report = self.report_generator.get_daily_report(date)
             else:
                 # Try to parse as date
@@ -715,7 +715,7 @@ class SlackBot:
                 project_text = escape(project)
                 owner = f"<@{task.assigned_to}>" if task.assigned_to else "—"
                 elapsed_seconds = (
-                    (datetime.utcnow() - task.started_at).total_seconds()
+                    (datetime.now(timezone.utc).replace(tzinfo=None) - task.started_at).total_seconds()
                     if task.started_at
                     else None
                 )
@@ -918,7 +918,7 @@ class SlackBot:
                 project_text = escape(project)
                 owner = f"<@{task.assigned_to}>" if task.assigned_to else "—"
                 elapsed_seconds = (
-                    (datetime.utcnow() - task.started_at).total_seconds()
+                    (datetime.now(timezone.utc).replace(tzinfo=None) - task.started_at).total_seconds()
                     if task.started_at
                     else None
                 )

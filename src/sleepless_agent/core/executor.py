@@ -5,7 +5,7 @@ import re
 import subprocess
 import time
 from collections import OrderedDict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Tuple, List, Dict
 import shutil
@@ -243,7 +243,7 @@ class ClaudeCodeExecutor:
                 PRIORITY="serious" if project_id else "random",
                 PRIORITY_LABEL="SERIOUS" if project_id else "RANDOM",
                 PROJECT_NAME=project_name or "None",
-                CREATED_AT=datetime.utcnow().isoformat(),
+                CREATED_AT=datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             )
 
             readme_path.write_text(content)
@@ -340,7 +340,7 @@ class ClaudeCodeExecutor:
             status_icon = "✅" if status == "completed" else "❌"
             git_line = f"\n- Git: {git_info}" if git_info else ""
 
-            update = f"\n\n### Execution {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            update = f"\n\n### Execution {datetime.now(timezone.utc).replace(tzinfo=None).strftime('%Y-%m-%d %H:%M:%S')}\n"
             update += f"- Status: {status_icon} {status.upper()}\n"
             update += f"- Files Modified: {files_modified}\n"
             update += f"- Duration: {execution_time}s"
@@ -1176,7 +1176,7 @@ Output should include:
         project_id: Optional[str] = None,
         project_name: Optional[str] = None,
         workspace_task_type: Optional[str] = None,
-    ) -> Tuple[str, List[str], List[str], int]:
+    ) -> Tuple[str, List[str], List[str], int, Dict, Optional[str]]:
         """Execute task with Claude Code SDK
 
         Args:
@@ -1190,7 +1190,8 @@ Output should include:
             workspace_task_type: Workspace task type ("new" or "refine") - for workspace initialization
 
         Returns:
-            Tuple of (output_text, files_modified, commands_executed, exit_code, usage_metrics)
+            Tuple of (output_text, files_modified, commands_executed, exit_code, usage_metrics, eval_status)
+            eval_status can be: "COMPLETE", "PARTIAL", "INCOMPLETE", "FAILED", or None if evaluator disabled
         """
         timeout = timeout or self.default_timeout
 
@@ -1472,7 +1473,7 @@ Output should include:
                 commands=len(all_commands_executed),
             )
 
-            return output_text, all_modified_files, all_commands_executed, final_exit_code, combined_metrics
+            return output_text, all_modified_files, all_commands_executed, final_exit_code, combined_metrics, eval_status
 
         except CLINotFoundError:
             self._live_update(

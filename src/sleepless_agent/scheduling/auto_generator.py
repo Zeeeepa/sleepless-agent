@@ -2,7 +2,7 @@
 
 import json
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, TypeAlias
 
 from claude_agent_sdk import (
@@ -58,6 +58,12 @@ class AutoTaskGenerator:
         self.night_start_hour = night_start_hour
         self.night_end_hour = night_end_hour
 
+        # Validate prompt weights sum to approximately 1.0
+        if self.config.prompts:
+            total_weight = sum(float(p.weight) for p in self.config.prompts if p.weight is not None)
+            assert abs(total_weight - 1.0) < 0.01, f"Prompt weights must sum to 1.0, got {total_weight:.3f}"
+            logger.debug("autogen.weights.validated", total_weight=total_weight)
+
         # Track generation metadata
         self.last_generation_time: Optional[datetime] = None
         self._last_generation_source: Optional[str] = None
@@ -65,18 +71,22 @@ class AutoTaskGenerator:
     async def check_and_generate(self) -> bool:
         """Check if conditions are met and generate a task if possible"""
         if not self.config.enabled:
+            logger.debug("autogen.disabled")
             return False
 
         # Check usage threshold and ceiling
         if not self._should_generate():
+            logger.debug("autogen.should_not_generate")
             return False
 
         # Try to generate a task
+        logger.info("autogen.attempting_generation")
         task = await self._generate_task()
         if task:
             logger.info("autogen.task.created", task_id=task.id, preview=task.description[:80], source=self._last_generation_source)
             return True
 
+        logger.warning("autogen.generation_failed")
         return False
 
     def _should_generate(self) -> bool:
@@ -96,17 +106,175 @@ class AutoTaskGenerator:
             # Don't generate on error - fail safe
             return False
 
+    def _determine_generation_mode(self, task_count: int) -> str:
+        """Determine generation mode based on current task count
+
+        Args:
+            task_count: Number of pending + in_progress tasks
+
+        Returns:
+            Generation mode: "refine_focused", "balanced", or "new_friendly"
+        """
+        if task_count >= 5:
+            return "refine_focused"
+        elif task_count >= 2:
+            return "balanced"
+        else:
+            return "new_friendly"
+
+    def _sample_recent_tasks(self, limit: int = 5) -> list[Task]:
+        """Sample recent tasks (completed or in_progress) to understand recent work
+
+        Args:
+            limit: Maximum number of tasks to sample
+
+        Returns:
+            List of recent tasks
+        """
+        tasks = self.session.query(Task).filter(
+            Task.status.in_([TaskStatus.COMPLETED, TaskStatus.IN_PROGRESS, TaskStatus.PENDING])
+        ).order_by(Task.created_at.desc()).limit(limit).all()
+        return tasks
+
+    def _analyze_task_readmes(self, tasks: list[Task]) -> dict:
+        """Analyze README files from tasks to extract status and recommendations
+
+        Args:
+            tasks: List of tasks to analyze
+
+        Returns:
+            Dictionary with aggregated information
+        """
+        from pathlib import Path
+        import re
+
+        analysis = {
+            'partial_or_incomplete': [],
+            'outstanding_items': [],
+            'recommendations': [],
+        }
+
+        workspace_root = Path("./workspace")
+        tasks_dir = workspace_root / "tasks"
+
+        if not tasks_dir.exists():
+            return analysis
+
+        for task in tasks:
+            # Find task workspace
+            task_workspace = None
+            for item in tasks_dir.iterdir():
+                if item.is_dir() and item.name.startswith(f"{task.id}_"):
+                    task_workspace = item
+                    break
+
+            if not task_workspace:
+                continue
+
+            readme_path = task_workspace / "README.md"
+            if not readme_path.exists():
+                continue
+
+            try:
+                content = readme_path.read_text()
+
+                # Extract status
+                status_match = re.search(r'## Status:\s*(\w+)', content)
+                if status_match:
+                    status = status_match.group(1)
+                    if status in ['PARTIAL', 'INCOMPLETE']:
+                        analysis['partial_or_incomplete'].append({
+                            'task_id': task.id,
+                            'description': task.description[:100],
+                            'status': status
+                        })
+
+                # Extract outstanding items
+                outstanding_section = re.search(r'## Outstanding Items\n(.*?)(?=##|$)', content, re.DOTALL)
+                if outstanding_section:
+                    items_text = outstanding_section.group(1).strip()
+                    if items_text and items_text != '(None)':
+                        # Extract list items
+                        items = re.findall(r'^[-*]\s+(.+)$', items_text, re.MULTILINE)
+                        analysis['outstanding_items'].extend(items[:3])  # Limit to 3 items
+
+                # Extract recommendations
+                rec_section = re.search(r'## Recommendations\n(.*?)(?=##|$)', content, re.DOTALL)
+                if rec_section:
+                    rec_text = rec_section.group(1).strip()
+                    if rec_text and rec_text != '(None)':
+                        # Extract list items
+                        recs = re.findall(r'^[-*]\s+(.+)$', rec_text, re.MULTILINE)
+                        analysis['recommendations'].extend(recs[:3])  # Limit to 3 items
+
+            except Exception as e:
+                logger.debug("autogen.readme_analysis.failed", task_id=task.id, error=str(e))
+                continue
+
+        return analysis
+
+    def _gather_codebase_context(self) -> dict:
+        """Gather codebase context for informed task generation
+
+        Returns:
+            Dictionary with context information
+        """
+        # Count current tasks
+        pending_tasks = self.session.query(Task).filter(Task.status == TaskStatus.PENDING).count()
+        in_progress_tasks = self.session.query(Task).filter(Task.status == TaskStatus.IN_PROGRESS).count()
+        task_count = pending_tasks + in_progress_tasks
+
+        # Determine generation mode
+        mode = self._determine_generation_mode(task_count)
+
+        # Sample recent tasks
+        recent_tasks = self._sample_recent_tasks(limit=5)
+
+        # Analyze READMEs
+        readme_analysis = self._analyze_task_readmes(recent_tasks)
+
+        # Build context summary
+        recent_work_summary = []
+        if readme_analysis['partial_or_incomplete']:
+            partial_items = [f"Task #{item['task_id']}: {item['description'][:80]} (Status: {item['status']})"
+                           for item in readme_analysis['partial_or_incomplete'][:3]]
+            recent_work_summary.append("Incomplete/Partial tasks:\n- " + "\n- ".join(partial_items))
+
+        if readme_analysis['outstanding_items']:
+            recent_work_summary.append("Outstanding items from recent tasks:\n- " + "\n- ".join(readme_analysis['outstanding_items'][:5]))
+
+        if readme_analysis['recommendations']:
+            recent_work_summary.append("Recommendations from recent tasks:\n- " + "\n- ".join(readme_analysis['recommendations'][:5]))
+
+        recent_work_text = "\n\n".join(recent_work_summary) if recent_work_summary else "No recent task history available"
+
+        context = {
+            'task_count': task_count,
+            'pending_count': pending_tasks,
+            'in_progress_count': in_progress_tasks,
+            'mode': mode,
+            'recent_work': recent_work_text,
+        }
+
+        logger.debug("autogen.context.gathered", task_count=task_count, mode=mode,
+                    partial_tasks=len(readme_analysis['partial_or_incomplete']))
+
+        return context
+
     async def _generate_task(self) -> Optional[Task]:
         """Generate a task using the configured prompt archetypes."""
-        prompt_config = self._select_prompt()
+        # Gather codebase context first
+        context = self._gather_codebase_context()
+
+        prompt_config = self._select_prompt(context)
         if not prompt_config:
             logger.warning("autogen.no_prompt_available")
             return None
 
         self._last_generation_source = prompt_config.name
-        logger.debug("autogen.prompt.begin", prompt=prompt_config.name)
+        logger.debug("autogen.prompt.begin", prompt=prompt_config.name, task_count=context['task_count'], mode=context['mode'])
 
-        task_desc = await self._generate_from_prompt(prompt_config)
+        task_desc = await self._generate_from_prompt(prompt_config, context)
 
         if not task_desc:
             return None
@@ -123,7 +291,7 @@ class AutoTaskGenerator:
             priority=priority,
             task_type=task_type,
             status=TaskStatus.PENDING,
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None)
         )
         self.session.add(task)
         self.session.flush()  # Get the ID
@@ -138,6 +306,8 @@ class AutoTaskGenerator:
                 "priority": priority.value,
                 "task_type": task_type.value,
                 "prompt_name": prompt_config.name,
+                "task_count_at_generation": context['task_count'],
+                "generation_mode": context['mode'],
             })
         )
         self.session.add(history)
@@ -145,21 +315,36 @@ class AutoTaskGenerator:
 
         return task
 
-    def _select_prompt(self) -> Optional[AutoTaskPromptConfig]:
-        """Select a prompt configuration based on configured weights."""
+    def _select_prompt(self, context: dict) -> Optional[AutoTaskPromptConfig]:
+        """Select a prompt configuration based on generation mode and configured weights."""
         prompts = self.config.prompts or []
+        logger.debug("autogen.select_prompt", prompt_count=len(prompts), mode=context['mode'])
+
+        mode = context['mode']
+
+        # Filter prompts by mode first
+        mode_prompts = [p for p in prompts if p.name == mode]
+
+        # If no exact mode match, fall back to weighted selection
+        if not mode_prompts:
+            logger.debug("autogen.no_mode_match", mode=mode, falling_back_to_weighted=True)
+            mode_prompts = prompts
+
         weighted_list: list[AutoTaskPromptConfig] = []
 
-        for prompt in prompts:
+        for prompt in mode_prompts:
             weight = max(int(prompt.weight * 10 or 0), 0)  # Scale by 10 for decimal weights
             if weight <= 0:
                 continue
             weighted_list.extend([prompt] * weight)
 
         if not weighted_list:
+            logger.warning("autogen.no_prompts_available", configured_prompts=len(prompts))
             return None
 
-        return random.choice(weighted_list)
+        selected = random.choice(weighted_list)
+        logger.debug("autogen.prompt_selected", name=selected.name)
+        return selected
 
     @staticmethod
     def _parse_task_type(task_desc: str) -> tuple[str, TaskType]:
@@ -171,25 +356,33 @@ class AutoTaskGenerator:
         Returns:
             Tuple of (clean_description, task_type)
         """
+        import re
+
         task_desc = task_desc.strip()
 
-        # Check for [NEW] prefix
-        if task_desc.upper().startswith("[NEW]"):
-            clean_desc = task_desc[5:].strip()
-            return (clean_desc, TaskType.NEW)
-
-        # Check for [REFINE] prefix
-        if task_desc.upper().startswith("[REFINE]"):
-            clean_desc = task_desc[8:].strip()
+        # Search for [REFINE] tag anywhere in the description (including in markdown bold markers)
+        refine_match = re.search(r'\*?\*?\[REFINE\]\*?\*?', task_desc, re.IGNORECASE)
+        if refine_match:
+            # Extract everything after the tag
+            start_pos = refine_match.end()
+            clean_desc = task_desc[start_pos:].strip()
             return (clean_desc, TaskType.REFINE)
+
+        # Search for [NEW] tag anywhere in the description
+        new_match = re.search(r'\*?\*?\[NEW\]\*?\*?', task_desc, re.IGNORECASE)
+        if new_match:
+            # Extract everything after the tag
+            start_pos = new_match.end()
+            clean_desc = task_desc[start_pos:].strip()
+            return (clean_desc, TaskType.NEW)
 
         # Default to NEW if no prefix found
         return (task_desc, TaskType.NEW)
 
-    async def _generate_from_prompt(self, prompt_config: AutoTaskPromptConfig) -> Optional[str]:
+    async def _generate_from_prompt(self, prompt_config: AutoTaskPromptConfig, context: dict) -> Optional[str]:
         """Execute the configured prompt via Claude and return the response."""
         try:
-            return await self._run_prompt(prompt_config)
+            return await self._run_prompt(prompt_config, context)
         except Exception as exc:  # pragma: no cover - defensive guard
             logger.debug(
                 "autogen.prompt.execution_failed",
@@ -198,12 +391,15 @@ class AutoTaskGenerator:
             )
             return None
 
-    async def _run_prompt(self, prompt_config: AutoTaskPromptConfig) -> Optional[str]:
+    async def _run_prompt(self, prompt_config: AutoTaskPromptConfig, context: dict) -> Optional[str]:
         """Stream the Claude response for the configured prompt."""
         prompt_text = prompt_config.prompt.strip()
         if not prompt_text:
             logger.debug("autogen.prompt.empty", prompt=prompt_config.name)
             return None
+
+        # Inject context into prompt
+        prompt_text = prompt_text.format(**context)
 
         options = self._build_options(self.default_model)
         text_segments: list[str] = []
@@ -214,9 +410,6 @@ class AutoTaskGenerator:
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             text_segments.append(block.text)
-                elif isinstance(message, ResultMessage):
-                    if message.result:
-                        text_segments.append(message.result)
         except (CLINotFoundError, ProcessError, CLIConnectionError, CLIJSONDecodeError) as exc:
             self._log_sdk_failure(exc, prompt_name=prompt_config.name)
             return None

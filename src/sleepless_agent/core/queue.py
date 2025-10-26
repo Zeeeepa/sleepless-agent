@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from sqlalchemy import case
@@ -112,7 +112,7 @@ class TaskQueue(SQLiteStore):
             task = session.query(Task).filter(Task.id == task_id).first()
             if task:
                 task.status = TaskStatus.IN_PROGRESS
-                task.started_at = datetime.utcnow()
+                task.started_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 task.attempt_count += 1
             return task
 
@@ -128,7 +128,7 @@ class TaskQueue(SQLiteStore):
             task = session.query(Task).filter(Task.id == task_id).first()
             if task:
                 task.status = TaskStatus.COMPLETED
-                task.completed_at = datetime.utcnow()
+                task.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 task.result_id = result_id
             return task
 
@@ -146,7 +146,7 @@ class TaskQueue(SQLiteStore):
                 task.status = TaskStatus.FAILED
                 task.error_message = error_message
                 if not task.completed_at:
-                    task.completed_at = datetime.utcnow()
+                    task.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
             return task
 
         task = self._run_write(_op)
@@ -161,7 +161,7 @@ class TaskQueue(SQLiteStore):
             task = session.query(Task).filter(Task.id == task_id).first()
             if task and task.status == TaskStatus.PENDING:
                 task.status = TaskStatus.CANCELLED
-                task.deleted_at = datetime.utcnow()
+                task.deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
             return task
 
         task = self._run_write(_op)
@@ -247,7 +247,7 @@ class TaskQueue(SQLiteStore):
             return []
 
         def _op(session: Session) -> List[Task]:
-            cutoff = datetime.utcnow() - timedelta(seconds=max_age_seconds)
+            cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=max_age_seconds)
             tasks = (
                 session.query(Task)
                 .filter(
@@ -261,7 +261,7 @@ class TaskQueue(SQLiteStore):
             if not tasks:
                 return []
 
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             for task in tasks:
                 task.status = TaskStatus.FAILED
                 task.completed_at = now
@@ -360,7 +360,7 @@ class TaskQueue(SQLiteStore):
             for task in tasks:
                 if task.status == TaskStatus.PENDING:
                     task.status = TaskStatus.CANCELLED
-                    task.deleted_at = datetime.utcnow()
+                    task.deleted_at = datetime.now(timezone.utc).replace(tzinfo=None)
                     count += 1
             return count
 

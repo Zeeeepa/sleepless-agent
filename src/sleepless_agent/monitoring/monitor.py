@@ -2,7 +2,7 @@
 
 import json
 import psutil
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -17,7 +17,7 @@ class HealthMonitor:
         """Initialize health monitor"""
         self.db_path = Path(db_path)
         self.results_path = Path(results_path)
-        self.start_time = datetime.utcnow()
+        self.start_time = datetime.now(timezone.utc).replace(tzinfo=None)
         self.stats = {
             "tasks_completed": 0,
             "tasks_failed": 0,
@@ -27,7 +27,7 @@ class HealthMonitor:
 
     def check_health(self) -> dict:
         """Check overall system health"""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         uptime = (now - self.start_time).total_seconds()
 
         health = {
@@ -71,7 +71,7 @@ class HealthMonitor:
                 return {"accessible": False, "size_mb": 0, "error": "Database file not found"}
 
             size_mb = self.db_path.stat().st_size / (1024 * 1024)
-            modified_ago = (datetime.utcnow() - datetime.fromtimestamp(
+            modified_ago = (datetime.now(timezone.utc).replace(tzinfo=None) - datetime.fromtimestamp(
                 self.db_path.stat().st_mtime
             )).total_seconds()
 
@@ -112,7 +112,7 @@ class HealthMonitor:
 
     def get_stats(self) -> dict:
         """Get performance statistics"""
-        uptime = (datetime.utcnow() - self.start_time).total_seconds()
+        uptime = (datetime.now(timezone.utc).replace(tzinfo=None) - self.start_time).total_seconds()
         self.stats["uptime_seconds"] = int(uptime)
 
         total_tasks = self.stats["tasks_completed"] + self.stats["tasks_failed"]
@@ -163,7 +163,7 @@ class HealthMonitor:
 
     def get_uptime(self) -> str:
         """Get formatted uptime"""
-        uptime = (datetime.utcnow() - self.start_time).total_seconds()
+        uptime = (datetime.now(timezone.utc).replace(tzinfo=None) - self.start_time).total_seconds()
         return self._format_uptime(uptime)
 
 
@@ -189,7 +189,7 @@ class PerformanceLogger:
         """Log task execution metrics"""
         try:
             metric = {
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                 "task_id": task_id,
                 "description": description[:60],
                 "priority": priority,
@@ -210,7 +210,7 @@ class PerformanceLogger:
         if not self.metrics_file.exists():
             return []
 
-        cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+        cutoff_time = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=hours)
         metrics = []
 
         try:

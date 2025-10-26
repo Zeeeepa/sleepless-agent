@@ -8,7 +8,7 @@ import re
 import shutil
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -266,9 +266,14 @@ def command_check(ctx: CLIContext) -> int:
         task = recent_for_activity[0]
         last_activity = task.completed_at or task.started_at or task.created_at
 
+    # Load live status entries for detailed executor info
+    live_status_path = ctx.db_path.parent / "live_status.json"
+    live_tracker = LiveStatusTracker(live_status_path)
+    live_entries = live_tracker.entries()
+
     live_table = Table.grid(padding=(0, 2))
     live_table.add_column(justify="right", style="bold cyan")
-    live_table.add_column(justify="left")
+    live_table.add_column(justify="left", width=80)
 
     # Daemon info
     daemon_status = "🔄 Running" if in_progress_tasks else "⏸️  Idle"
@@ -277,11 +282,42 @@ def command_check(ctx: CLIContext) -> int:
 
     if in_progress_tasks:
         current_task = in_progress_tasks[0]
-        live_table.add_row("Current Task", f"#{current_task.id}: {shorten(current_task.description, limit=80)}")
+        live_table.add_row("Current Task", f"#{current_task.id}: {shorten(current_task.description, limit=70)}")
         if current_task.started_at:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             elapsed = (now - current_task.started_at).total_seconds()
             live_table.add_row("Task Runtime", format_duration(elapsed))
+
+        # Find matching live status entry
+        matching_entry = None
+        for entry in live_entries:
+            if entry.task_id == current_task.id:
+                matching_entry = entry
+                break
+
+        if matching_entry:
+            # Show current phase with emoji
+            phase_emojis = {
+                "planner": "🔍",
+                "worker": "⚙️",
+                "evaluator": "✅",
+                "initializing": "🚀",
+                "completed": "✅",
+                "error": "❌",
+            }
+            phase_emoji = phase_emojis.get(matching_entry.phase.lower(), "•")
+            phase_display = f"{phase_emoji} {matching_entry.phase.title()}"
+            live_table.add_row("Current Phase", f"[bold]{phase_display}[/]")
+
+            # Show current prompt (truncated and wrapped)
+            if matching_entry.prompt_preview:
+                prompt_text = shorten(matching_entry.prompt_preview, limit=150)
+                live_table.add_row("Current Prompt", f"[dim]{prompt_text}[/]")
+
+            # Show current answer (truncated and wrapped)
+            if matching_entry.answer_preview:
+                answer_text = shorten(matching_entry.answer_preview, limit=150)
+                live_table.add_row("Current Answer", f"[dim italic]{answer_text}[/]")
     else:
         live_table.add_row("Current Task", "—")
 
@@ -441,35 +477,19 @@ def command_check(ctx: CLIContext) -> int:
         )
     recent_panel = Panel(recent_table, border_style="orange1")
 
-    # Create hierarchical layout with regions
-    layout = Layout(name="root")
-    layout.split_column(
-        Layout(name="header", size=3),
-        Layout(name="top_section", size=8),
-        Layout(name="middle_section", size=10),
-    )
-
-    layout["header"].update(header_panel)
-
-    layout["top_section"].split_row(
-        Layout(name="health", ratio=1),
-        Layout(name="storage", ratio=1),
-    )
-    layout["top_section"]["health"].update(health_panel)
-    layout["top_section"]["storage"].update(storage_panel)
-
-    layout["middle_section"].split_row(
-        Layout(name="queue", ratio=1),
-        Layout(name="metrics", ratio=1),
-    )
-    layout["middle_section"]["queue"].update(queue_panel)
-    layout["middle_section"]["metrics"].update(metrics_panel)
-
-    # Print layout (header + summary panels)
+    # Print header
     console.print()
-    console.print(layout)
+    console.print(header_panel)
 
-    # Print tasks panels sequentially (auto-sized by Rich, no truncation)
+    # Create 2x2 grid for System Health, Storage, Queue, Performance
+    grid = Table.grid(expand=True)
+    grid.add_column(ratio=1)
+    grid.add_column(ratio=1)
+    grid.add_row(health_panel, storage_panel)
+    grid.add_row(queue_panel, metrics_panel)
+    console.print(grid)
+
+    # Print Live Status panel
     console.print()
     console.print(live_panel)
     if details_panel:
@@ -525,7 +545,7 @@ def command_cancel(ctx: CLIContext, identifier: str | int) -> int:
         # Confirm move to trash
         print(f"About to move project '{project['project_name']}' ({project_id}) to trash")
         print(f"This will move {project['total_tasks']} task(s) to trash")
-        print(f"Workspace will be moved to: workspace/trash/project_{project_id}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}/")
+        print(f"Workspace will be moved to: workspace/trash/project_{project_id}_{datetime.now(timezone.utc).replace(tzinfo=None).strftime('%Y%m%d_%H%M%S')}/")
 
         response = input("Continue? (y/N): ").strip().lower()
         if response != 'y':
@@ -541,7 +561,7 @@ def command_cancel(ctx: CLIContext, identifier: str | int) -> int:
         if workspace_path.exists():
             trash_dir = Path("workspace") / "trash"
             trash_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y%m%d_%H%M%S")
             trash_path = trash_dir / f"project_{project_id}_{timestamp}"
             workspace_path.rename(trash_path)
             print(f"Moved workspace to trash: {trash_path}")
@@ -591,7 +611,7 @@ def _summarize_metrics(entries: list[dict]) -> dict:
     ]
     avg_duration = sum(durations) / len(durations) if durations else None
 
-    cutoff = datetime.utcnow() - timedelta(hours=24)
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None).replace(tzinfo=None) - timedelta(hours=24)
     recent = []
     for entry in entries:
         ts = _parse_timestamp(entry.get("timestamp"))
@@ -766,7 +786,7 @@ def command_report(ctx: CLIContext, identifier: Optional[str] = None, list_repor
 
     if not identifier:
         # Default: today's daily report
-        date = datetime.utcnow().strftime("%Y-%m-%d")
+        date = datetime.now(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d")
         report = ctx.report_generator.get_daily_report(date)
         print(report)
         return 0
