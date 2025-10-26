@@ -140,7 +140,7 @@ def command_check(ctx: CLIContext) -> int:
     entries = _load_metrics(ctx.logs_dir)
     metrics_summary = _summarize_metrics(entries)
 
-    # Get Pro plan usage info with threshold
+    # Get Pro plan usage info with threshold (only show if usage > 0)
     pro_plan_usage_info = ""
     try:
         from sleepless_agent.monitoring.pro_plan_usage import ProPlanUsageChecker
@@ -149,8 +149,9 @@ def command_check(ctx: CLIContext) -> int:
             command=config.claude_code.usage_command,
         )
         usage_percent, _ = checker.get_usage()
-        threshold = config.claude_code.threshold_night if is_nighttime(night_start_hour=config.claude_code.night_start_hour, night_end_hour=config.claude_code.night_end_hour) else config.claude_code.threshold_day
-        pro_plan_usage_info = f" • Pro Usage: {usage_percent:.0f}% / {threshold:.0f}% limit"
+        if usage_percent > 0:
+            threshold = config.claude_code.threshold_night if is_nighttime(night_start_hour=config.claude_code.night_start_hour, night_end_hour=config.claude_code.night_end_hour) else config.claude_code.threshold_day
+            pro_plan_usage_info = f" • Pro Usage: {usage_percent:.0f}% / {threshold:.0f}% limit"
     except Exception as exc:
         logger.debug(f"Could not fetch Pro plan usage for dashboard: {exc}")
 
@@ -172,16 +173,9 @@ def command_check(ctx: CLIContext) -> int:
     storage = health.get("storage", {})
 
     header_text = Text()
-    header_text.append(f"{status_emoji} Sleepless Agent Dashboard\n", style="bold bright_magenta")
-    header_text.append(
-        f"Status: {str(status).upper()} • "
-        f"Uptime: {health.get('uptime_human', 'N/A')} • "
-        f"CPU: {system.get('cpu_percent', 'N/A')}% • "
-        f"Memory: {system.get('memory_percent', 'N/A')}% • "
-        f"Queue: {queue_status['pending']} pending / {queue_status['in_progress']} running"
-        f"{pro_plan_usage_info}",
-        style="dim",
-    )
+    header_text.append(f"{status_emoji} Sleepless Agent Dashboard", style="bold bright_magenta")
+    if pro_plan_usage_info:
+        header_text.append(f"{pro_plan_usage_info}", style="dim")
     header_panel = Panel(Align.center(header_text), border_style=status_style)
 
     health_table = Table.grid(padding=(0, 2))
@@ -261,134 +255,44 @@ def command_check(ctx: CLIContext) -> int:
 
     metrics_panel = Panel(metrics_table, border_style="yellow")
 
-    live_entries = []
-    try:
-        tracker = LiveStatusTracker(ctx.db_path.parent / "live_status.json")
-        live_entries = tracker.entries()
-    except Exception as exc:  # pragma: no cover - best effort
-        logger.debug(f"Live status unavailable: {exc}")
-        live_entries = []
+    # Live Status: Show daemon and executor info
+    in_progress_tasks = ctx.task_queue.get_in_progress_tasks()
+    workspace_path = Path(config.agent.workspace_root).resolve()
 
-    live_table = Table(
-        box=box.MINIMAL_DOUBLE_HEAD,
-        expand=True,
-        title=f"Live Sessions ({len(live_entries)})",
-    )
-    live_table.add_column("Task", style="bold")
-    live_table.add_column("Phase", style="cyan")
-    live_table.add_column("Query", overflow="fold")
-    live_table.add_column("Answer", overflow="fold")
-    live_table.add_column("Updated", justify="right")
+    # Get last activity from most recent task
+    recent_for_activity = ctx.task_queue.get_recent_tasks(limit=1)
+    last_activity = None
+    if recent_for_activity:
+        task = recent_for_activity[0]
+        last_activity = task.completed_at or task.started_at or task.created_at
 
-    for entry in live_entries:
-        updated_dt = _parse_timestamp(entry.updated_at)
-        updated_text = relative_time(updated_dt) if updated_dt else "—"
-        live_table.add_row(
-            f"#{entry.task_id}",
-            entry.phase.title(),
-            shorten(entry.prompt_preview, limit=60) if entry.prompt_preview else "—",
-            shorten(entry.answer_preview, limit=60) if entry.answer_preview else "—",
-            updated_text,
-        )
+    live_table = Table.grid(padding=(0, 2))
+    live_table.add_column(justify="right", style="bold cyan")
+    live_table.add_column(justify="left")
 
-    if live_entries:
-        live_panel = Panel(live_table, border_style="bright_cyan")
+    # Daemon info
+    daemon_status = "🔄 Running" if in_progress_tasks else "⏸️  Idle"
+    daemon_status_color = "green" if in_progress_tasks else "yellow"
+    live_table.add_row("Daemon Status", f"[{daemon_status_color}]{daemon_status}[/]")
+
+    if in_progress_tasks:
+        current_task = in_progress_tasks[0]
+        live_table.add_row("Current Task", f"#{current_task.id}: {shorten(current_task.description, limit=80)}")
+        if current_task.started_at:
+            now = datetime.utcnow()
+            elapsed = (now - current_task.started_at).total_seconds()
+            live_table.add_row("Task Runtime", format_duration(elapsed))
     else:
-        live_panel = Panel(
-            Align.center(Text("No active Claude sessions.", style="dim")),
-            title="Live Sessions",
-            border_style="bright_cyan",
-        )
+        live_table.add_row("Current Task", "—")
 
-    running_tasks = ctx.task_queue.get_in_progress_tasks()
-    running_table = Table(
-        box=box.MINIMAL_DOUBLE_HEAD,
-        expand=True,
-        title=f"Active Tasks ({len(running_tasks)})",
-    )
-    running_table.add_column("ID", style="bold")
-    running_table.add_column("Project", style="cyan")
-    running_table.add_column("Description", overflow="fold")
-    running_table.add_column("Owner")
-    running_table.add_column("Started")
-    running_table.add_column("Elapsed", justify="right")
-
-    now = datetime.utcnow()
-    for task in running_tasks:
-        elapsed_str = "—"
-        if task.started_at:
-            elapsed = (now - task.started_at).total_seconds()
-            if elapsed < 1800:
-                elapsed_str = f"[green]{format_duration(elapsed)}[/]"
-            elif elapsed < 3600:
-                elapsed_str = f"[yellow]{format_duration(elapsed)}[/]"
-            else:
-                elapsed_str = f"[red bold]⚠️ {format_duration(elapsed)}[/]"
-        running_table.add_row(
-            str(task.id),
-            task.project_name or task.project_id or "—",
-            shorten(task.description),
-            task.assigned_to or "—",
-            task.started_at.isoformat(sep=" ", timespec="minutes") if task.started_at else "—",
-            elapsed_str,
-        )
-
-    if running_tasks:
-        running_panel = Panel(running_table, border_style="magenta")
+    # Executor info
+    live_table.add_row("Active Workspace", str(workspace_path))
+    if last_activity:
+        live_table.add_row("Last Activity", relative_time(last_activity))
     else:
-        running_panel = Panel(
-            Align.center(Text("No tasks currently running.", style="dim")),
-            title="Active Tasks",
-            border_style="magenta",
-        )
+        live_table.add_row("Last Activity", "—")
 
-    pending_tasks = ctx.task_queue.get_pending_tasks(limit=5)
-    pending_table = Table(
-        box=box.MINIMAL_DOUBLE_HEAD,
-        expand=True,
-        title=f"Next Up ({len(pending_tasks)} shown)",
-    )
-    pending_table.add_column("ID", style="bold")
-    pending_table.add_column("Priority")
-    pending_table.add_column("Project", style="cyan")
-    pending_table.add_column("Created")
-    pending_table.add_column("Age")
-    pending_table.add_column("Summary", overflow="fold")
-
-    for task in pending_tasks:
-        age_seconds = (now - task.created_at).total_seconds()
-        age_str = relative_time(task.created_at)
-        if age_seconds < 3600:
-            age_display = age_str
-        elif age_seconds < 86400:
-            age_display = f"[yellow]{age_str}[/]"
-        else:
-            age_display = f"[red bold]⚠️ {age_str}[/]"
-
-        if task.priority.value == TaskPriority.SERIOUS.value:
-            priority_display = f"[red bold]{task.priority.value}[/]"
-        elif task.priority.value == TaskPriority.RANDOM.value:
-            priority_display = f"[cyan]{task.priority.value}[/]"
-        else:
-            priority_display = f"[magenta]{task.priority.value}[/]"
-
-        pending_table.add_row(
-            str(task.id),
-            priority_display,
-            task.project_name or task.project_id or "—",
-            task.created_at.isoformat(sep=" ", timespec="minutes"),
-            age_display,
-            shorten(task.description),
-        )
-
-    if pending_tasks:
-        pending_panel = Panel(pending_table, border_style="green")
-    else:
-        pending_panel = Panel(
-            Align.center(Text("Queue is clear. 🎉", style="dim")),
-            title="Next Up",
-            border_style="green",
-        )
+    live_panel = Panel(live_table, title="Live Status", border_style="bright_cyan")
 
     projects = ctx.task_queue.get_projects()
     project_panel = None
@@ -414,28 +318,69 @@ def command_check(ctx: CLIContext) -> int:
             )
         project_panel = Panel(project_table, border_style="bright_blue")
 
+    # Adaptive Details panel: show errors if present, otherwise recent tasks
     failed_tasks = ctx.task_queue.get_failed_tasks(limit=5)
-    errors_panel = None
+    details_panel = None
     if failed_tasks:
-        errors_table = Table(
-            title=f"Recent Errors ({len(failed_tasks)})",
-            box=box.SIMPLE_HEAVY,
+        # Show errors
+        details_table = Table(
+            title=f"Details (Errors: {len(failed_tasks)})",
+            box=box.MINIMAL_DOUBLE_HEAD,
             expand=True,
         )
-        errors_table.add_column("ID", style="bold red")
-        errors_table.add_column("When", style="dim")
-        errors_table.add_column("Task", overflow="fold")
-        errors_table.add_column("Error", overflow="fold", style="red")
+        details_table.add_column("ID", style="bold red")
+        details_table.add_column("When", style="dim")
+        details_table.add_column("Task", overflow="fold")
+        details_table.add_column("Error", overflow="fold", style="red")
 
         for task in failed_tasks:
-            error_preview = shorten(task.error_message, limit=50) if task.error_message else "Unknown error"
-            errors_table.add_row(
+            error_preview = shorten(task.error_message, limit=100) if task.error_message else "Unknown error"
+            details_table.add_row(
                 str(task.id),
                 relative_time(task.created_at),
-                shorten(task.description, limit=40),
+                shorten(task.description, limit=80),
                 error_preview,
             )
-        errors_panel = Panel(errors_table, border_style="red")
+        details_panel = Panel(details_table, border_style="red")
+    else:
+        # Show recent tasks (any status)
+        detail_tasks = ctx.task_queue.get_recent_tasks(limit=5)
+        if detail_tasks:
+            details_table = Table(
+                title=f"Details (Recent: {len(detail_tasks)})",
+                box=box.MINIMAL_DOUBLE_HEAD,
+                expand=True,
+            )
+            details_table.add_column("ID", style="bold")
+            details_table.add_column("Status")
+            details_table.add_column("When", style="dim")
+            details_table.add_column("Task", overflow="fold")
+
+            status_icons = {
+                TaskStatus.COMPLETED: "✅",
+                TaskStatus.IN_PROGRESS: "🔄",
+                TaskStatus.PENDING: "🕒",
+                TaskStatus.FAILED: "❌",
+                TaskStatus.CANCELLED: "🗑️",
+            }
+            status_colors = {
+                TaskStatus.COMPLETED: "green",
+                TaskStatus.IN_PROGRESS: "cyan",
+                TaskStatus.PENDING: "yellow",
+                TaskStatus.FAILED: "red",
+                TaskStatus.CANCELLED: "dim",
+            }
+
+            for task in detail_tasks:
+                icon = status_icons.get(task.status, "•")
+                status_color = status_colors.get(task.status, "white")
+                details_table.add_row(
+                    str(task.id),
+                    f"[{status_color}]{icon} {task.status.value}[/]",
+                    relative_time(task.created_at),
+                    shorten(task.description, limit=100),
+                )
+            details_panel = Panel(details_table, border_style="blue")
 
     recent_tasks = ctx.task_queue.get_recent_tasks(limit=8)
     status_icons = {
@@ -447,7 +392,7 @@ def command_check(ctx: CLIContext) -> int:
     }
     recent_table = Table(
         title="Recent Activity",
-        box=box.SIMPLE_HEAVY,
+        box=box.MINIMAL_DOUBLE_HEAD,
         expand=True,
     )
     recent_table.add_column("ID", style="bold")
@@ -499,10 +444,9 @@ def command_check(ctx: CLIContext) -> int:
     # Create hierarchical layout with regions
     layout = Layout(name="root")
     layout.split_column(
-        Layout(name="header", size=5),
-        Layout(name="top_section", size=10),
-        Layout(name="middle_section", size=12),
-        Layout(name="tasks_section"),
+        Layout(name="header", size=3),
+        Layout(name="top_section", size=8),
+        Layout(name="middle_section", size=10),
     )
 
     layout["header"].update(header_panel)
@@ -528,13 +472,9 @@ def command_check(ctx: CLIContext) -> int:
     # Print tasks panels sequentially (auto-sized by Rich, no truncation)
     console.print()
     console.print(live_panel)
-    console.print()
-    console.print(running_panel)
-    console.print()
-    console.print(pending_panel)
-    if errors_panel:
+    if details_panel:
         console.print()
-        console.print(errors_panel)
+        console.print(details_panel)
     if project_panel:
         console.print()
         console.print(project_panel)
