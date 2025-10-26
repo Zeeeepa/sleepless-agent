@@ -483,7 +483,7 @@ If you use Sleepless Agent in your research or projects, please cite:
 ```bibtex
 @software{sleepless_agent_2025,
   title = {Sleepless Agent: A 24/7 AgentOS for Continuous Development},
-  author = {Context Machine Lab},
+  author = {Zhimeng Guo, Hangfan Zhang, Siyuan Xu, Huaisheng Zhu, Teng Xiao, Minhao Cheng},
   year = {2025},
   publisher = {GitHub},
   journal = {GitHub repository},
