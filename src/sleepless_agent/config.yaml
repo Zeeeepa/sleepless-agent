@@ -9,7 +9,7 @@ claude_code:
 
 git:
   use_remote_repo: true
-  remote_repo_url: git@github.com:TimeLovercc/test4.git # !!!CHANGE THIS!!!
+  remote_repo_url: git@github.com:TimeLovercc/test5.git # !!!CHANGE THIS!!!
   auto_create_repo: true
 
 agent:
