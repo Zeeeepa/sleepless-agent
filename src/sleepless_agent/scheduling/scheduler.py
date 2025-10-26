@@ -458,7 +458,72 @@ class SmartScheduler:
 
             logger.info("scheduler.dispatch", **payload)
 
-        return pending
+        # Filter out tasks that would conflict with currently executing tasks
+        # (e.g., REFINE tasks targeting a workspace that's already in use)
+        non_conflicting_tasks = self._filter_workspace_conflicts(in_progress, pending)
+
+        if len(non_conflicting_tasks) < len(pending):
+            filtered_count = len(pending) - len(non_conflicting_tasks)
+            logger.debug(
+                "scheduler.workspace_conflict",
+                filtered_count=filtered_count,
+                dispatching=len(non_conflicting_tasks)
+            )
+
+        return non_conflicting_tasks
+
+    def _get_task_workspace_identifier(self, task: Task) -> str:
+        """Get workspace identifier for a task
+
+        Args:
+            task: Task object
+
+        Returns:
+            Workspace identifier (e.g., "task:2", "project:myproject")
+        """
+        import json
+
+        # For project tasks, use project workspace
+        if task.project_id:
+            return f"project:{task.project_id}"
+
+        # Check if this task refines another task
+        if task.context:
+            try:
+                context = json.loads(task.context)
+                refines_task_id = context.get('refines_task_id')
+                if refines_task_id is not None:
+                    # REFINE task uses the target task's workspace
+                    return f"task:{refines_task_id}"
+            except (json.JSONDecodeError, TypeError, KeyError):
+                pass
+
+        # Regular task uses its own workspace
+        return f"task:{task.id}"
+
+    def _filter_workspace_conflicts(self, in_progress: List[Task], pending: List[Task]) -> List[Task]:
+        """Filter pending tasks to avoid workspace conflicts
+
+        Args:
+            in_progress: Currently executing tasks
+            pending: Pending tasks to potentially dispatch
+
+        Returns:
+            Filtered list of pending tasks that won't conflict with in-progress tasks
+        """
+        # Get workspaces currently in use
+        busy_workspaces = {self._get_task_workspace_identifier(task) for task in in_progress}
+
+        # Filter pending tasks to exclude those targeting busy workspaces
+        non_conflicting = []
+        for task in pending:
+            task_workspace = self._get_task_workspace_identifier(task)
+            if task_workspace not in busy_workspaces:
+                non_conflicting.append(task)
+                # Mark this workspace as busy for subsequent checks in this batch
+                busy_workspaces.add(task_workspace)
+
+        return non_conflicting
 
     def schedule_task(
         self,

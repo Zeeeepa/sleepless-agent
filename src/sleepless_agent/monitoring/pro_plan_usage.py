@@ -144,7 +144,7 @@ class ProPlanUsageChecker:
             else:
                 reset_label = "unknown"
 
-            # Only log if usage changed by >=5% or reset time changed significantly
+            # Only log at significant milestones or major changes
             # This reduces log noise from small fluctuations
             previous_snapshot = self._last_logged_usage
             should_log = False
@@ -161,8 +161,13 @@ class ProPlanUsageChecker:
                 percent_change = abs(usage_percent - prev_percent)
                 reset_changed = reset_time != prev_reset
 
-                # Log if usage changed by >=5% OR if we're near threshold (every % counts)
-                if percent_change >= 5.0 or usage_percent >= 80.0:
+                # Log at 10% milestones (50%, 60%, 70%, 80%, 90%, 100%)
+                current_milestone = int(usage_percent / 10) * 10
+                prev_milestone = int(prev_percent / 10) * 10
+                crossed_milestone = current_milestone != prev_milestone and current_milestone >= 50
+
+                # Log if crossed a milestone OR if we're near threshold (every % counts)
+                if crossed_milestone or usage_percent >= 80.0:
                     should_log = True
                 # Also log if reset time changed (new day/period)
                 elif reset_changed and prev_reset and reset_time:

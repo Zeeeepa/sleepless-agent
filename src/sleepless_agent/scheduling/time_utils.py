@@ -18,7 +18,13 @@ def is_nighttime(
     if dt is None:
         dt = datetime.now()
     hour = dt.hour
-    return hour >= night_start_hour or hour < night_end_hour
+
+    if night_start_hour < night_end_hour:
+        # Same-day period (e.g., 1 AM to 9 AM)
+        return night_start_hour <= hour < night_end_hour
+    else:
+        # Cross-midnight period (e.g., 8 PM to 8 AM)
+        return hour >= night_start_hour or hour < night_end_hour
 
 
 def get_time_label(
@@ -40,9 +46,17 @@ def current_period_start(
     today = dt.replace(hour=0, minute=0, second=0, microsecond=0)
 
     if is_nighttime(dt, night_start_hour, night_end_hour):
-        night_start = today.replace(hour=night_start_hour)
-        if dt.hour < night_end_hour:
-            night_start = (today - timedelta(days=1)).replace(hour=night_start_hour)
-        return night_start
+        if night_start_hour < night_end_hour:
+            # Same-day nighttime (e.g., 1 AM to 9 AM) - period starts at night_start_hour today
+            return today.replace(hour=night_start_hour)
+        else:
+            # Cross-midnight nighttime (e.g., 8 PM to 8 AM)
+            if dt.hour >= night_start_hour:
+                # Before midnight: period starts today at night_start_hour
+                return today.replace(hour=night_start_hour)
+            else:
+                # After midnight: period starts yesterday at night_start_hour
+                return (today - timedelta(days=1)).replace(hour=night_start_hour)
 
+    # Daytime period starts at night_end_hour today
     return today.replace(hour=night_end_hour)

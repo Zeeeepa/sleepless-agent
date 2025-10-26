@@ -839,13 +839,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    task_parser = subparsers.add_parser("task", help="Queue a serious task")
-    task_parser.add_argument("-p", "--project", required=True, help="Project name to associate with the task (required)")
-    task_parser.add_argument("description", nargs='+', help="Task description")
-
-    think_parser = subparsers.add_parser("think", help="Capture a random thought")
-    think_parser.add_argument("-p", "--project", required=True, help="Project name to associate with the thought (required)")
-    think_parser.add_argument("description", nargs='+', help="Thought description")
+    think_parser = subparsers.add_parser("think", help="Create a task or capture a thought")
+    think_parser.add_argument("-p", "--project", help="Project name (optional). With -p: creates SERIOUS priority project task. Without -p: creates THOUGHT priority one-time task.")
+    think_parser.add_argument("description", nargs='+', help="Task/thought description")
 
     subparsers.add_parser("check", help="Show comprehensive system overview with rich output")
 
@@ -873,17 +869,13 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     ctx = build_context(args)
 
-    if args.command == "task":
-        description = " ".join(args.description).strip()
-        if not description:
-            parser.error("task requires a description")
-        return command_task(ctx, description, TaskPriority.SERIOUS, args.project)
-
     if args.command == "think":
         description = " ".join(args.description).strip()
         if not description:
             parser.error("think requires a description")
-        return command_task(ctx, description, TaskPriority.THOUGHT, args.project)
+        # Determine priority based on whether project is provided
+        priority = TaskPriority.SERIOUS if args.project else TaskPriority.THOUGHT
+        return command_task(ctx, description, priority, args.project)
 
     if args.command == "check":
         return command_check(ctx)
