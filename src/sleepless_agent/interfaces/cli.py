@@ -52,8 +52,11 @@ def build_context(args: argparse.Namespace) -> CLIContext:
 
     config = get_config()
 
-    db_path = Path(config.agent.db_path)
-    results_path = Path(config.agent.results_path)
+    # Infer paths from workspace_root, similar to WorkspaceSetup._apply_workspace_root
+    workspace_root = Path(config.agent.workspace_root).expanduser().resolve()
+    data_dir = workspace_root / "data"
+    db_path = data_dir / "tasks.db"
+    results_path = data_dir / "results"
     logs_dir = db_path.parent  # Use same directory as db_path for metrics
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -146,7 +149,7 @@ def command_check(ctx: CLIContext) -> int:
             command=config.claude_code.usage_command,
         )
         usage_percent, _ = checker.get_usage()
-        threshold = config.claude_code.pause_threshold_night if is_nighttime() else config.claude_code.pause_threshold_day
+        threshold = config.claude_code.threshold_night if is_nighttime(night_start_hour=config.claude_code.night_start_hour, night_end_hour=config.claude_code.night_end_hour) else config.claude_code.threshold_day
         pro_plan_usage_info = f" • Pro Usage: {usage_percent:.0f}% / {threshold:.0f}% limit"
     except Exception as exc:
         logger.debug(f"Could not fetch Pro plan usage for dashboard: {exc}")

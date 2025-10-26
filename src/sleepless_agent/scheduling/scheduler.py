@@ -1,6 +1,6 @@
 """Smart task scheduler with usage tracking and time-based quotas"""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -192,8 +192,10 @@ class SmartScheduler:
         daily_budget_usd: float = 10.0,
         night_quota_percent: float = 90.0,
         usage_command: str = "/usage",
-        pause_threshold_day: float = 20.0,
-        pause_threshold_night: float = 80.0,
+        threshold_day: float = 20.0,
+        threshold_night: float = 80.0,
+        night_start_hour: int = 20,
+        night_end_hour: int = 8,
     ):
         """Initialize scheduler
 
@@ -203,14 +205,18 @@ class SmartScheduler:
             daily_budget_usd: Daily budget in USD (default: $10)
             night_quota_percent: Percentage for night usage (default: 90%)
             usage_command: CLI command to check usage (default: "/usage")
-            pause_threshold_day: Pause threshold during daytime (default: 20%)
-            pause_threshold_night: Pause threshold during nighttime (default: 80%)
+            threshold_day: Pause threshold during daytime (default: 20%)
+            threshold_night: Pause threshold during nighttime (default: 80%)
+            night_start_hour: Hour when night starts (default: 20 for 8 PM)
+            night_end_hour: Hour when night ends (default: 8 for 8 AM)
         """
         self.task_queue = task_queue
         self.max_parallel_tasks = max_parallel_tasks
         self.usage_command = usage_command
-        self.pause_threshold_day = pause_threshold_day
-        self.pause_threshold_night = pause_threshold_night
+        self.threshold_day = threshold_day
+        self.threshold_night = threshold_night
+        self.night_start_hour = night_start_hour
+        self.night_end_hour = night_end_hour
 
         # Budget management with time-based allocation
         session = self.task_queue.SessionLocal()
@@ -280,7 +286,7 @@ class SmartScheduler:
                 context = {
                     "event": "scheduler.pause.pending",
                     "reason": "usage_pause",
-                    "resume_at": self.usage_pause_until.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z'),
+                    "resume_at": self.usage_pause_until.replace(tzinfo=timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z'),
                     "detail": self._format_remaining(remaining),
                     "decision_logic": "Pausing: in pause window, waiting for resume time",
                 }
@@ -308,7 +314,7 @@ class SmartScheduler:
                     "reason": "usage_threshold",
                     "usage_percent": usage_percent,
                     "threshold_percent": effective_threshold,
-                    "resume_at": pause_until.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z'),
+                    "resume_at": pause_until.replace(tzinfo=timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z'),
                     "detail": self._format_remaining(remaining),
                     "decision_logic": f"Pausing: usage {usage_percent}% >= threshold {effective_threshold}% ({time_period})",
                 }
@@ -337,10 +343,10 @@ class SmartScheduler:
 
         Returns:
             Threshold percentage (0-100) from config:
-            - Daytime: pause_threshold_day
-            - Nighttime: pause_threshold_night
+            - Daytime: threshold_day
+            - Nighttime: threshold_night
         """
-        return self.pause_threshold_night if is_nighttime() else self.pause_threshold_day
+        return self.threshold_night if is_nighttime(night_start_hour=self.night_start_hour, night_end_hour=self.night_end_hour) else self.threshold_day
 
     @staticmethod
     def _format_remaining(delta: timedelta) -> str:

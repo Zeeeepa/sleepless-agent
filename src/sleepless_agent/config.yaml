@@ -1,8 +1,10 @@
 claude_code:
   binary_path: claude
   model: claude-sonnet-4-5-20250929
-  pause_threshold_day: 80.0
-  pause_threshold_night: 80.0
+  night_start_hour: 1
+  night_end_hour: 9
+  threshold_day: 100.0
+  threshold_night: 100.0
   usage_command: claude /usage
 
 git:
