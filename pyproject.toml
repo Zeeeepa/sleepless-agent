@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sleepless-agent"
-version = "0.1.1"
+version = "0.1.2"
 description = "24/7 AI agent that maximizes Claude usage via Slack interface"
 readme = "README.md"
 authors = [{name = "Sleepless Agent Maintainers"}]
