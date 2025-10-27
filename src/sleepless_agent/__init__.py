@@ -17,7 +17,7 @@ from sleepless_agent.core.queue import TaskQueue
 from sleepless_agent.core.executor import ClaudeCodeExecutor
 from sleepless_agent.storage.git import GitManager
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 __all__ = [
     "SleeplessAgent",
