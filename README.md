@@ -494,3 +494,7 @@ If you use Sleepless Agent in your research or projects, please cite:
 ## 📄 License
 
 Released under the [MIT License](LICENSE)
+
+## 🔧 Development
+
+Tested Sleepless Agent integration on 2025-12-15.
