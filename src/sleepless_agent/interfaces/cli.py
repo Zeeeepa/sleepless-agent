@@ -832,6 +832,98 @@ def command_report(ctx: CLIContext, identifier: Optional[str] = None, list_repor
         return 0
 
 
+def command_usage(ctx: CLIContext) -> int:
+    """Show Claude Code Pro plan usage with visual bar."""
+
+    console = Console()
+
+    try:
+        from sleepless_agent.monitoring.pro_plan_usage import ProPlanUsageChecker
+        from sleepless_agent.scheduling.time_utils import is_nighttime
+
+        config = get_config()
+        checker = ProPlanUsageChecker(command=config.claude_code.usage_command)
+
+        usage_percent, reset_time = checker.get_usage()
+
+        # Determine current threshold based on time of day
+        night_mode = is_nighttime(
+            night_start_hour=config.claude_code.night_start_hour,
+            night_end_hour=config.claude_code.night_end_hour,
+        )
+        current_threshold = (
+            config.claude_code.threshold_night if night_mode else config.claude_code.threshold_day
+        )
+        period_label = "Night" if night_mode else "Day"
+
+        # Format reset time
+        if reset_time:
+            reset_str = reset_time.strftime("%I:%M %p UTC")
+        else:
+            reset_str = "Unknown"
+
+        # Determine status
+        if usage_percent >= current_threshold:
+            status_emoji = "🔴"
+            status_text = "At Limit"
+            status_style = "red bold"
+        elif usage_percent >= current_threshold - 10:
+            status_emoji = "🟡"
+            status_text = "Near Limit"
+            status_style = "yellow"
+        elif usage_percent >= 50:
+            status_emoji = "🟠"
+            status_text = "Moderate"
+            status_style = "orange1"
+        else:
+            status_emoji = "🟢"
+            status_text = "Healthy"
+            status_style = "green"
+
+        # Build usage bar
+        bar_length = 40
+        filled = int(usage_percent / 100 * bar_length)
+        empty = bar_length - filled
+        usage_bar = "█" * filled + "░" * empty
+
+        # Build table
+        table = Table.grid(padding=(0, 2))
+        table.add_column(justify="right", style="bold cyan")
+        table.add_column(justify="left")
+
+        table.add_row("Usage", f"[{status_style}]{usage_percent:.1f}%[/] {usage_bar}")
+        table.add_row("Status", f"{status_emoji} [{status_style}]{status_text}[/]")
+        table.add_row("Period", f"{period_label} (threshold: {current_threshold:.0f}%)")
+        table.add_row("Resets", reset_str)
+
+        # Add warning if near or at limit
+        warning_text = None
+        if usage_percent >= current_threshold:
+            warning_text = "⚠️  Usage at threshold - new task generation is paused until reset"
+        elif usage_percent >= current_threshold - 10:
+            remaining = current_threshold - usage_percent
+            warning_text = f"ℹ️  {remaining:.1f}% remaining before threshold"
+
+        panel = Panel(
+            table,
+            title=f"{status_emoji} Claude Code Usage",
+            border_style=status_style.split()[0],  # Use first word of style for border
+        )
+
+        console.print()
+        console.print(panel)
+
+        if warning_text:
+            console.print(f"[dim]{warning_text}[/]")
+
+        console.print()
+        return 0
+
+    except Exception as e:
+        console.print(f"[red]Failed to get usage: {e}[/]")
+        return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct the CLI argument parser."""
 
@@ -844,6 +936,7 @@ def build_parser() -> argparse.ArgumentParser:
     think_parser.add_argument("description", nargs='+', help="Task/thought description")
 
     subparsers.add_parser("check", help="Show comprehensive system overview with rich output")
+    subparsers.add_parser("usage", help="Show Claude Code Pro plan usage")
 
     cancel_parser = subparsers.add_parser("cancel", help="Move a task or project to trash")
     cancel_parser.add_argument("identifier", help="Task ID (integer) or project name/ID (string)")
@@ -879,6 +972,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     if args.command == "check":
         return command_check(ctx)
+
+    if args.command == "usage":
+        return command_usage(ctx)
 
     if args.command == "cancel":
         return command_cancel(ctx, args.identifier)
