@@ -1,16 +1,16 @@
 claude_code:
   binary_path: claude
-  model: claude-sonnet-4-5-20250929
+  model: claude-opus-4-5-20251101
   night_start_hour: 1
   night_end_hour: 9
-  threshold_day: 20.0
-  threshold_night: 80.0
+  threshold_day: 95.0
+  threshold_night: 95.0
   usage_command: claude /usage
 
 git:
-  use_remote_repo: true
+  use_remote_repo: false
   remote_repo_url: git@github.com:TimeLovercc/test5.git # !!!CHANGE THIS!!!
-  auto_create_repo: true
+  auto_create_repo: false
 
 agent:
   workspace_root: ./workspace
@@ -28,7 +28,7 @@ multi_agent_workflow:
     max_turns: 10
 
 auto_generation:
-  enabled: true
+  enabled: false
   prompts:
     - name: refine_focused
       prompt: |-
