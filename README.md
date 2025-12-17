@@ -160,6 +160,7 @@ All Slack commands align with the CLI commands for consistency:
 | `/think` | Capture random thought | `/think Explore async ideas` |
 | `/think -p <project>` | Add serious task to project | `/think Add OAuth2 support -p backend` |
 | `/check` | Show system status | `/check` |
+| `/usage` | Show Claude Code Pro usage | `/usage` |
 | `/cancel` | Cancel task or project | `/cancel 5` or `/cancel my-app` |
 
 ### 📊 Reporting & Trash
@@ -186,6 +187,7 @@ The CLI mirrors the Slack slash commands:
 | `think <description>` | Capture a random thought | `think "Explore async patterns"` |
 | `think <description> -p <project>` | Queue a serious task to project | `think "Build onboarding flow" -p backend` |
 | `check` | Show system health, queue, and performance metrics | `check` |
+| `usage` | Show Claude Code Pro plan usage | `usage` |
 | `report [identifier]` | Show task details, daily reports, or project summaries (`--list` for all reports) | `report 7` |
 | `cancel <identifier>` | Move a task or project to trash | `cancel 9` or `cancel my-app` |
 | `trash [subcommand] [identifier]` | Manage trash (list, restore, empty) | `trash restore my-app` |

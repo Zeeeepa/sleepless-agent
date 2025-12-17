@@ -149,4 +149,3 @@ auto_generation:
         - For new tasks: Use [NEW] followed by description
         - Your response MUST be 1-2 sentences max
       weight: 0.20
-

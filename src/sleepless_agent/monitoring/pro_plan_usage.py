@@ -100,7 +100,8 @@ class ProPlanUsageChecker:
             cleaned_output = self._clean_command_output(raw_output)
 
             # Check for errors
-            if return_code not in (0, -15, -9):  # 0 = success, -15 = SIGTERM, -9 = SIGKILL
+            # Accept: 0 (success), -15/-9 (Python signal convention), 143/137 (shell signal convention: 128+signal)
+            if return_code not in (0, -15, -9, 143, 137):
                 if cleaned_output:
                     logger.warning(
                         "usage.command.nonzero_exit",

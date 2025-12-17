@@ -59,15 +59,15 @@ class SlackBot:
     def handle_event(self, client: SocketModeClient, req: SocketModeRequest):
         """Handle incoming Slack events"""
         try:
+            # Acknowledge immediately to meet Slack's 3-second requirement
+            client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
+
             if req.type == "events_api":
                 self.handle_events_api(req)
-                client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
             elif req.type == "slash_commands":
                 self.handle_slash_command(req)
-                client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
         except Exception as e:
             logger.error(f"Error handling event: {e}")
-            client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
 
     def handle_events_api(self, req: SocketModeRequest):
         """Handle events API"""
@@ -96,19 +96,25 @@ class SlackBot:
 
         logger.info(f"Slash command: {command} {text} from {user}")
 
-        if command == "/task" or command == "/think":
-            # Both commands now use unified handler with dynamic priority
-            self.handle_think_command(text, user, channel, response_url)
-        elif command == "/check":
-            self.handle_check_command(response_url)
-        elif command == "/cancel":
-            self.handle_cancel_command(text, response_url)
-        elif command == "/report":
-            self.handle_report_command(text, response_url)
-        elif command == "/trash":
-            self.handle_trash_command(text, response_url)
-        else:
-            self.send_response(response_url, f"Unknown command: {command}")
+        try:
+            if command == "/task" or command == "/think":
+                # Both commands now use unified handler with dynamic priority
+                self.handle_think_command(text, user, channel, response_url)
+            elif command == "/check":
+                self.handle_check_command(response_url)
+            elif command == "/cancel":
+                self.handle_cancel_command(text, response_url)
+            elif command == "/report":
+                self.handle_report_command(text, response_url)
+            elif command == "/trash":
+                self.handle_trash_command(text, response_url)
+            elif command == "/usage":
+                self.handle_usage_command(response_url, channel)
+            else:
+                self.send_response(response_url, f"Unknown command: {command}")
+        except Exception as e:
+            logger.error(f"Error executing {command}: {e}", exc_info=True)
+            self.send_response(response_url, f"Error executing {command}: {str(e)}")
 
     def handle_think_command(
         self,
@@ -327,13 +333,14 @@ class SlackBot:
             self.send_response(response_url, message=f"Failed to move to trash: {str(e)}", blocks=error_blocks)
             logger.error(f"Failed to cancel: {e}")
 
-    def send_response(self, response_url: str, message: str = None, blocks: list = None):
+    def send_response(self, response_url: str, message: str = None, blocks: list = None, channel: str = None):
         """Send response to Slack
 
         Args:
             response_url: Slack response URL
             message: Plain text fallback message
             blocks: Block Kit blocks for rich formatting
+            channel: Optional channel ID for fallback posting via WebClient
         """
         try:
             import requests
@@ -351,13 +358,40 @@ class SlackBot:
             if not payload.get("text") and not payload.get("blocks"):
                 payload["text"] = "No message"
 
-            requests.post(
+            logger.info(f"send_response: posting to response_url, message_len={len(message or '')}, has_channel={channel is not None}")
+            response = requests.post(
                 response_url,
                 json=payload,
-                timeout=5,
+                timeout=10,
             )
+
+            # Check response status
+            if response.status_code != 200:
+                logger.error(f"send_response: failed status={response.status_code} body={response.text[:500]}")
+                # Try fallback via WebClient if channel provided
+                if channel and message:
+                    logger.info(f"send_response: trying WebClient fallback to channel {channel}")
+                    self._send_via_webclient(channel, message, blocks)
+            else:
+                logger.info(f"send_response: success status={response.status_code}")
+
         except Exception as e:
-            logger.error(f"Failed to send response: {e}")
+            logger.error(f"send_response: exception {e}")
+            # Try fallback via WebClient if channel provided
+            if channel and message:
+                logger.info(f"send_response: trying WebClient fallback after exception")
+                self._send_via_webclient(channel, message, blocks)
+
+    def _send_via_webclient(self, channel: str, message: str, blocks: list = None):
+        """Fallback method to send message via WebClient"""
+        try:
+            if blocks:
+                self.client.chat_postMessage(channel=channel, text=message, blocks=blocks)
+            else:
+                self.client.chat_postMessage(channel=channel, text=message)
+            logger.info(f"_send_via_webclient: success to {channel}")
+        except Exception as e:
+            logger.error(f"_send_via_webclient: failed {e}")
 
     def send_message(self, channel: str, message: str):
         """Send message to channel"""
@@ -563,6 +597,99 @@ class SlackBot:
             fallback = "Usage: /trash list|restore|empty"
             self.send_response(response_url, message=fallback, blocks=blocks)
 
+    def handle_usage_command(self, response_url: str, channel: str = None):
+        """Handle /usage command - show Claude Code Pro plan usage
+
+        Usage: /usage
+        """
+        try:
+            from sleepless_agent.monitoring.pro_plan_usage import ProPlanUsageChecker
+            from sleepless_agent.utils.config import get_config
+            from sleepless_agent.scheduling.time_utils import is_nighttime
+
+            logger.debug("usage_command.start")
+
+            config = get_config()
+            checker = ProPlanUsageChecker(command=config.claude_code.usage_command)
+
+            logger.debug("usage_command.fetching_usage")
+            usage_percent, reset_time = checker.get_usage()
+            logger.debug(f"usage_command.got_usage usage_percent={usage_percent}")
+
+            # Determine current threshold based on time of day
+            night_mode = is_nighttime(
+                night_start_hour=config.claude_code.night_start_hour,
+                night_end_hour=config.claude_code.night_end_hour,
+            )
+            current_threshold = (
+                config.claude_code.threshold_night if night_mode else config.claude_code.threshold_day
+            )
+            period_label = "Night" if night_mode else "Day"
+
+            # Format reset time
+            if reset_time:
+                from datetime import timezone as tz
+                reset_local = reset_time.replace(tzinfo=tz.utc)
+                reset_str = reset_local.strftime("%I:%M %p UTC")
+            else:
+                reset_str = "Unknown"
+
+            # Determine status emoji based on usage level
+            if usage_percent >= current_threshold:
+                status_emoji = "🔴"
+                status_text = "At Limit"
+            elif usage_percent >= current_threshold - 10:
+                status_emoji = "🟡"
+                status_text = "Near Limit"
+            elif usage_percent >= 50:
+                status_emoji = "🟠"
+                status_text = "Moderate"
+            else:
+                status_emoji = "🟢"
+                status_text = "Healthy"
+
+            # Build usage bar
+            bar_length = 20
+            filled = int(usage_percent / 100 * bar_length)
+            empty = bar_length - filled
+            usage_bar = "█" * filled + "░" * empty
+
+            # Build blocks
+            blocks = [
+                self._block_header(f"{status_emoji} Claude Code Usage"),
+                self._block_section(
+                    f"*Usage:* `{usage_percent:.1f}%` {usage_bar}\n"
+                    f"*Status:* {status_text}\n"
+                    f"*Period:* {period_label} (threshold: {current_threshold:.0f}%)\n"
+                    f"*Resets:* {reset_str}",
+                    markdown=True
+                ),
+            ]
+
+            # Add warning if near or at limit
+            if usage_percent >= current_threshold:
+                blocks.append(self._block_context(
+                    "⚠️ Usage at threshold - new task generation is paused until reset"
+                ))
+            elif usage_percent >= current_threshold - 10:
+                remaining = current_threshold - usage_percent
+                blocks.append(self._block_context(
+                    f"ℹ️ {remaining:.1f}% remaining before threshold"
+                ))
+
+            fallback = f"{status_emoji} Claude Usage: {usage_percent:.1f}% | Resets: {reset_str}"
+            logger.debug(f"usage_command.sending_response fallback={fallback}")
+            self.send_response(response_url, message=fallback, blocks=blocks, channel=channel)
+            logger.info(f"usage_command.complete usage_percent={usage_percent:.1f}")
+
+        except Exception as e:
+            logger.error(f"usage_command.exception error={e}", exc_info=True)
+            error_blocks = [
+                self._block_header("❌ Error Getting Usage"),
+                self._block_section(f"Failed to get usage: {str(e)}", markdown=True)
+            ]
+            self.send_response(response_url, message=f"Failed to get usage: {str(e)}", blocks=error_blocks, channel=channel)
+
     def handle_report_command(self, identifier: str, response_url: str):
         """Handle /report command - unified report handler (task/daily/project)
 
@@ -691,8 +818,7 @@ class SlackBot:
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": text,
-                "emoji": True
+                "text": text
             }
         }
 
@@ -702,14 +828,17 @@ class SlackBot:
 
     def _block_section(self, text: str, markdown: bool = False) -> dict:
         """Create a section block with text"""
-        return {
+        block = {
             "type": "section",
             "text": {
                 "type": "mrkdwn" if markdown else "plain_text",
-                "text": text,
-                "emoji": True
+                "text": text
             }
         }
+        # emoji is only valid for plain_text, not mrkdwn
+        if not markdown:
+            block["text"]["emoji"] = True
+        return block
 
     def _block_section_fields(self, fields: list[dict]) -> dict:
         """Create a section block with fields
