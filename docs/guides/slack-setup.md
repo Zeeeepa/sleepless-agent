@@ -108,6 +108,14 @@ Short Description: Manage cancelled tasks
 Usage Hint: <list | restore <id> | empty>
 ```
 
+#### /usage Command
+```
+Command: /usage
+Request URL: [Leave empty]
+Short Description: Show Claude Code Pro plan usage
+Usage Hint: [Leave empty]
+```
+
 ## Step 4: Set OAuth Scopes
 
 ### 4.1 Navigate to OAuth & Permissions

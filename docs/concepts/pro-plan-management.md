@@ -14,6 +14,22 @@ Claude Pro Plan
 └── Usage tracking
 ```
 
+## Checking Usage
+
+You can check your current Claude Code Pro plan usage in two ways:
+
+### Via Slack
+```
+/usage
+```
+Returns a visual usage bar, current status, threshold settings, and reset time.
+
+### Via CLI
+```bash
+sle usage
+```
+Shows the same information in your terminal with colored output.
+
 ## Usage Tracking
 
 ### 1. Real-Time Monitoring

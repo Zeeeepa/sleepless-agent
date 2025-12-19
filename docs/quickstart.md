@@ -50,6 +50,7 @@ pip install -e .
 Go to Features → Slash Commands and create:
 - `/think` - Submit tasks
 - `/check` - Check status
+- `/usage` - Show Claude Code Pro plan usage
 
 ### Set Bot Permissions
 Features → OAuth & Permissions → Bot Token Scopes:

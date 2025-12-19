@@ -108,6 +108,7 @@ Visit https://api.slack.com/apps and create a new app:
 Settings > Slash Commands > Create New Command:
 - `/think` - Capture thought or task (use `-p project-name` for serious tasks)
 - `/check` - Check queue status
+- `/usage` - Show Claude Code Pro plan usage
 - `/cancel` - Cancel task or project
 - `/report` - Show reports or task details
 - `/trash` - Manage trash (list, restore, empty)
