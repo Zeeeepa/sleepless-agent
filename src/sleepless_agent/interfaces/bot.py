@@ -1,7 +1,10 @@
 """Slack bot interface for task management"""
 
+import asyncio
 import json
+import threading
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from sleepless_agent.monitoring.logging import get_logger
@@ -19,6 +22,7 @@ from sleepless_agent.core.queue import TaskQueue
 from sleepless_agent.tasks.utils import prepare_task_creation, slugify_project
 from sleepless_agent.utils.live_status import LiveStatusTracker
 from sleepless_agent.monitoring.report_generator import ReportGenerator
+from sleepless_agent.chat import ChatSessionManager, ChatExecutor, ChatHandler
 
 
 class SlackBot:
@@ -33,6 +37,7 @@ class SlackBot:
         monitor=None,
         report_generator=None,
         live_status_tracker: Optional[LiveStatusTracker] = None,
+        workspace_root: str = "./workspace",
     ):
         """Initialize Slack bot"""
         self.bot_token = bot_token
@@ -42,8 +47,22 @@ class SlackBot:
         self.monitor = monitor
         self.report_generator = report_generator
         self.live_status_tracker = live_status_tracker
+        self.workspace_root = Path(workspace_root)
         self.client = WebClient(token=bot_token)
         self.socket_mode_client = SocketModeClient(app_token=app_token, web_client=self.client)
+
+        # Initialize chat mode components
+        chat_sessions_path = self.workspace_root / "data" / "chat_sessions.json"
+        self.chat_session_manager = ChatSessionManager(storage_path=chat_sessions_path)
+        self.chat_executor = ChatExecutor(workspace_root=str(self.workspace_root))
+        self.chat_handler = ChatHandler(
+            session_manager=self.chat_session_manager,
+            chat_executor=self.chat_executor,
+            task_queue=self.task_queue,
+            slack_client=self.client,
+        )
+        self._async_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._async_thread: Optional[threading.Thread] = None
 
     def start(self):
         """Start bot and listen for events"""
@@ -80,9 +99,29 @@ class SlackBot:
         if event.get("bot_id"):
             return
 
+        # Ignore message subtypes (edits, deletes, etc.)
+        if event.get("subtype"):
+            return
+
         channel = event.get("channel")
         user = event.get("user")
         text = event.get("text", "").strip()
+        thread_ts = event.get("thread_ts")  # Parent thread timestamp if in a thread
+
+        logger.debug(f"Message event: user={user}, channel={channel}, thread_ts={thread_ts}, text={text[:50] if text else 'empty'}...")
+
+        # Check if this message is in a chat mode thread
+        if thread_ts:
+            session = self.chat_session_manager.get_session_by_thread(thread_ts)
+            logger.debug(f"Thread message lookup: thread_ts={thread_ts}, session_found={session is not None}")
+            if session:
+                logger.debug(f"Session details: session_user={session.user_id}, event_user={user}, match={session.user_id == user}")
+                if session.user_id == user:
+                    logger.info(f"Chat mode message from {user} in thread {thread_ts}: {text[:50]}...")
+                    self._handle_chat_message_async(session, text, channel, thread_ts)
+                    return
+                else:
+                    logger.debug(f"User mismatch: session is for {session.user_id}, message from {user}")
 
         logger.info(f"Message from {user}: {text}")
 
@@ -100,6 +139,8 @@ class SlackBot:
             if command == "/task" or command == "/think":
                 # Both commands now use unified handler with dynamic priority
                 self.handle_think_command(text, user, channel, response_url)
+            elif command == "/chat":
+                self.handle_chat_command(text, user, channel, response_url)
             elif command == "/check":
                 self.handle_check_command(response_url)
             elif command == "/cancel":
@@ -156,6 +197,163 @@ class SlackBot:
             note=note,
             project_name=project_name,
             project_id=project_id,
+        )
+
+    def handle_chat_command(
+        self,
+        args: str,
+        user_id: str,
+        channel_id: str,
+        response_url: str,
+    ):
+        """Handle /chat command - interactive chat mode with Claude.
+
+        Usage:
+            /chat <project_name> - Start chat mode for a project
+            /chat end - End current session
+            /chat status - Check session status
+            /chat help - Show help
+        """
+        result = self.chat_handler.handle_chat_command(
+            args=args,
+            user_id=user_id,
+            channel_id=channel_id,
+            response_url=response_url,
+        )
+
+        if result.get("action") == "start_session":
+            # Create thread and start session
+            success = self._start_chat_thread(
+                user_id=result["user_id"],
+                channel_id=result["channel_id"],
+                project_id=result["project_id"],
+                project_name=result["project_name"],
+                response_url=response_url,
+            )
+            if not success:
+                self.send_response(
+                    response_url,
+                    message="Failed to start chat mode. Check bot permissions.",
+                )
+        else:
+            # Regular response
+            self.send_response(
+                response_url,
+                message=result.get("text", ""),
+                blocks=result.get("blocks"),
+            )
+
+    def _start_chat_thread(
+        self,
+        user_id: str,
+        channel_id: str,
+        project_id: str,
+        project_name: str,
+        response_url: str,
+    ) -> bool:
+        """Create a Slack thread to start the chat session.
+
+        Returns True if successful, False otherwise.
+        """
+        try:
+            # Create project workspace immediately (like -p flag behavior)
+            workspace_path = self.workspace_root / "projects" / project_id
+            workspace_path.mkdir(parents=True, exist_ok=True)
+
+            # Create a README if it's a new project
+            readme_path = workspace_path / "README.md"
+            if not readme_path.exists():
+                readme_content = f"# {project_name}\n\nProject created via chat mode.\n"
+                readme_path.write_text(readme_content)
+                logger.info(f"Created new project workspace: {workspace_path}")
+
+            # Build welcome message
+            welcome_text = (
+                f"Chat mode started for project *{project_name}*.\n\n"
+                f"Send messages in this thread to interact with Claude.\n"
+                f"Type `exit` or use `/chat end` to end the session."
+            )
+
+            blocks = [
+                self._block_header("Chat Mode Started"),
+                self._block_section(welcome_text, markdown=True),
+                self._block_context(f"Project: {project_name} | Session will timeout after 30 min of inactivity"),
+            ]
+
+            # Post message to channel to create thread
+            response = self.client.chat_postMessage(
+                channel=channel_id,
+                text=f"Chat mode started for project {project_name}",
+                blocks=blocks,
+            )
+
+            thread_ts = response["ts"]
+
+            # Add active indicator emoji to the welcome message
+            try:
+                self.client.reactions_add(
+                    channel=channel_id,
+                    timestamp=thread_ts,
+                    name="speech_balloon",  # 💬 emoji
+                )
+            except Exception as e:
+                logger.debug(f"Could not add reaction: {e}")
+
+            # Create session with thread_ts
+            session = self.chat_session_manager.create_session(
+                user_id=user_id,
+                channel_id=channel_id,
+                thread_ts=thread_ts,
+                project_id=project_id,
+                project_name=project_name,
+                workspace_path=str(workspace_path),
+            )
+
+            logger.info(
+                f"Chat session started: user={user_id}, project={project_name}, thread={thread_ts}"
+            )
+
+            # Send first instruction message in the thread
+            self.client.chat_postMessage(
+                channel=channel_id,
+                thread_ts=thread_ts,
+                text=(
+                    "👋 *I'm ready to help!*\n\n"
+                    "Just type your message here and I'll respond.\n"
+                    "I can read, write, and edit files in your project.\n\n"
+                    "_Type `exit` when you're done._"
+                ),
+            )
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to start chat thread: {e}", exc_info=True)
+            return False
+
+    def _handle_chat_message_async(
+        self,
+        session,
+        text: str,
+        channel: str,
+        thread_ts: str,
+    ):
+        """Handle chat message asynchronously using a background event loop."""
+        # Ensure we have an event loop running in a background thread
+        if self._async_loop is None or not self._async_loop.is_running():
+            self._async_loop = asyncio.new_event_loop()
+
+            def run_loop():
+                asyncio.set_event_loop(self._async_loop)
+                self._async_loop.run_forever()
+
+            self._async_thread = threading.Thread(target=run_loop, daemon=True)
+            self._async_thread.start()
+
+        # Schedule the async handler
+        asyncio.run_coroutine_threadsafe(
+            self.chat_handler.handle_chat_message(session, text, channel, thread_ts),
+            self._async_loop,
         )
 
     def _create_task(
