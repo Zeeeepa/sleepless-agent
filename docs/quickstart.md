@@ -50,12 +50,20 @@ pip install -e .
 Go to Features → Slash Commands and create:
 - `/think` - Submit tasks
 - `/check` - Check status
+- `/chat` - Interactive chat mode with Claude
 - `/usage` - Show Claude Code Pro plan usage
 
 ### Set Bot Permissions
 Features → OAuth & Permissions → Bot Token Scopes:
 - `chat:write`
 - `commands`
+- `channels:history` (for chat mode)
+- `reactions:write` (for chat mode)
+
+### Enable Events (for Chat Mode)
+Features → Event Subscriptions → Enable Events → Subscribe to bot events:
+- `message.channels`
+- `message.groups`
 
 ### Install to Workspace
 - Click "Install to Workspace"
@@ -96,6 +104,25 @@ In Slack, try these commands:
 ```
 
 The agent should acknowledge your task and show the queue status.
+
+### Try Chat Mode
+
+Start an interactive session with Claude:
+
+```
+/chat my-project
+```
+
+This creates a **Slack thread** where you can have a real-time conversation with Claude.
+
+> ⚠️ **Important**: All messages to Claude must be sent **inside the thread**, not in the main channel. Claude will only respond to messages within the chat thread.
+
+In the thread, try:
+```
+Create a hello world Python script
+```
+
+To end the session, type `exit` in the thread or use `/chat end`.
 
 ## What's Next?
 

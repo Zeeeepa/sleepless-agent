@@ -59,6 +59,7 @@ PR: https://github.com/user/repo/pull/123
 
 - 🤖 **Continuous Operation**: Runs 24/7 daemon, always ready for new tasks
 - 💬 **Slack Integration**: Submit tasks via Slack commands
+- 💭 **Interactive Chat Mode**: Real-time conversational sessions with Claude in Slack threads
 - 🎯 **Hybrid Autonomy**: Auto-applies random thoughts, requires review for serious tasks
 - ⚡ **Smart Scheduling**: Optimizes task execution based on priorities
 - 📊 **Task Queue**: SQLite-backed persistent task management
@@ -107,6 +108,7 @@ Visit https://api.slack.com/apps and create a new app:
 **Create Slash Commands**
 Settings > Slash Commands > Create New Command:
 - `/think` - Capture thought or task (use `-p project-name` for serious tasks)
+- `/chat` - Start interactive chat mode with Claude
 - `/check` - Check queue status
 - `/usage` - Show Claude Code Pro plan usage
 - `/cancel` - Cancel task or project
@@ -118,6 +120,14 @@ Features > OAuth & Permissions > Bot Token Scopes:
 - `chat:write`
 - `commands`
 - `app_mentions:read`
+- `channels:history` (for chat mode)
+- `groups:history` (for chat mode in private channels)
+- `reactions:write` (for chat mode indicators)
+
+**Event Subscriptions** (for Chat Mode)
+Features > Event Subscriptions > Enable Events > Subscribe to bot events:
+- `message.channels`
+- `message.groups`
 
 **Install App**
 - Install to workspace
@@ -163,6 +173,27 @@ All Slack commands align with the CLI commands for consistency:
 | `/check` | Show system status | `/check` |
 | `/usage` | Show Claude Code Pro usage | `/usage` |
 | `/cancel` | Cancel task or project | `/cancel 5` or `/cancel my-app` |
+
+### 💭 Interactive Chat Mode
+
+Start a real-time conversation with Claude in a dedicated Slack thread:
+
+| Command | Purpose | Example |
+|---------|---------|---------|
+| `/chat <project>` | Start chat mode for a project | `/chat my-backend` |
+| `/chat end` | End current chat session | `/chat end` |
+| `/chat status` | Check active session status | `/chat status` |
+| `/chat help` | Show chat mode help | `/chat help` |
+
+**Chat Mode Features:**
+- 🧵 Dedicated thread for each session
+- 💬 Full conversation history maintained
+- 🔄 Real-time processing indicator
+- 📁 Claude can read/write/edit files in project workspace
+- ⏱️ Auto-timeout after 30 minutes of inactivity
+- Type `exit` in thread to end session
+
+> 💡 **Note**: When you run `/chat <project>`, a new thread is created. All your prompts must be sent **inside this thread** - Claude only responds to messages within the chat thread, not in the main channel.
 
 ### 📊 Reporting & Trash
 

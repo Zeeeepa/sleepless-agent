@@ -116,6 +116,14 @@ Short Description: Show Claude Code Pro plan usage
 Usage Hint: [Leave empty]
 ```
 
+#### /chat Command
+```
+Command: /chat
+Request URL: [Leave empty]
+Short Description: Start interactive chat mode with Claude
+Usage Hint: <project_name> | end | status | help
+```
+
 ## Step 4: Set OAuth Scopes
 
 ### 4.1 Navigate to OAuth & Permissions
@@ -133,10 +141,14 @@ Add these scopes:
 | `commands` | Receive slash commands |
 | `app_mentions:read` | Respond to @mentions |
 | `channels:read` | List channels |
+| `channels:history` | Read message history (required for chat mode) |
 | `groups:read` | Access private channels |
+| `groups:history` | Read private channel history (required for chat mode) |
 | `im:read` | Read direct messages |
 | `im:write` | Send direct messages |
+| `im:history` | Read DM history (required for chat mode) |
 | `users:read` | Get user information |
+| `reactions:write` | Add emoji reactions (for chat mode indicators) |
 
 ### 4.3 User Token Scopes (Optional)
 
@@ -162,8 +174,11 @@ Add these bot events:
 | Event | Purpose |
 |-------|---------|
 | `app_mention` | Respond when bot is mentioned |
-| `message.channels` | Monitor channel messages (optional) |
+| `message.channels` | Monitor channel messages (**required for chat mode**) |
+| `message.groups` | Monitor private channel messages (**required for chat mode**) |
 | `message.im` | Respond to direct messages |
+
+> ⚠️ **Important for Chat Mode**: The `message.channels` and `message.groups` events are required for chat mode to receive messages in threads. Without these, chat mode will not work.
 
 ### 5.3 Event URL
 
@@ -278,6 +293,64 @@ Try these commands:
 /report --list
 # Should list available reports
 ```
+
+### 9.3 Test Chat Mode
+
+Try the interactive chat mode:
+
+```
+/chat my-project
+# Should create a thread with welcome message
+
+# In the thread, send a message:
+"What files are in this project?"
+# Claude should respond in the thread
+
+# End the session:
+exit
+# Or use /chat end
+```
+
+## Chat Mode Usage
+
+### Starting a Chat Session
+
+```
+/chat <project-name>
+```
+
+This creates:
+- A new Slack thread for the conversation
+- A project folder at `workspace/projects/<project-name>/`
+- A session that maintains conversation history
+
+### Chat Mode Commands
+
+| Command | Description |
+|---------|-------------|
+| `/chat <project>` | Start chat mode for a project |
+| `/chat end` | End current chat session |
+| `/chat status` | Show current session info |
+| `/chat help` | Show help |
+
+### In-Thread Commands
+
+While in a chat thread, you can:
+- Send any message to interact with Claude
+- Type `exit`, `end`, or `quit` to end the session
+- Claude can read, write, and edit files in the project workspace
+
+### Visual Indicators
+
+| Indicator | Meaning |
+|-----------|---------|
+| 💬 (reaction) | Chat session is active |
+| 🔄 Processing... | Claude is working on your request |
+| ✅ (reaction) | Chat session has ended |
+
+### Session Timeout
+
+Sessions automatically end after 30 minutes of inactivity.
 
 ## Advanced Configuration
 
