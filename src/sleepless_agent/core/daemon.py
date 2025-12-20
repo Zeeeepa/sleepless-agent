@@ -133,6 +133,7 @@ class SleeplessAgent:
             monitor=self.monitor,
             report_generator=self.report_generator,
             live_status_tracker=self.live_status_tracker,
+            workspace_root=str(self.config.agent.workspace_root),
         )
 
         self.timeout_manager = TaskTimeoutManager(
