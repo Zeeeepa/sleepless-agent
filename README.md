@@ -24,6 +24,11 @@ Have Claude Code Pro but not using it at night? Transform it into an AgentOS tha
 ## 🎬 Demo
 
 <div align="center">
+  <img src="assets/sleepless.png" alt="Sleepless Agent System Architecture" width="700">
+  <p><em>System architecture showing task flow from Slack to workspace execution</em></p>
+</div>
+
+<div align="center">
   <img src="assets/cli.png" alt="Sleepless Agent CLI Demo" width="800">
   <p><em>Sleepless Agent CLI in action - managing tasks, checking status, and generating reports</em></p>
 </div>
